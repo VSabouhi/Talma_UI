@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file>icon/settings.png</file>
+        <file>icon/data.png</file>
+        <file>icon/heatmap.png</file>
+    </qresource>
+</RCC>
