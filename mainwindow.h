@@ -14,6 +14,9 @@
 #include <QComboBox>
 #include <QPushButton>
 #include <QSpinBox>
+#include "summarydata.h"  // برای دریافت داده Summary از SerialReceiver
+
+
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -83,6 +86,7 @@ private slots:
     void onSerialError(QSerialPort::SerialPortError e);
     void onPacket(const NodePacket &pkt);
     void updateLiveMonitoring();
+    void onSummaryReceived(const SummaryData &summary);  // دریافت داده 0x40 از MCU
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;

@@ -3,6 +3,7 @@
 #include <QSerialPort>
 #include <QByteArray>
 #include <array>
+#include "summarydata.h"
 
 struct NodePacket {
     quint8 type;     // Byte2
@@ -26,6 +27,7 @@ public:
 signals:
     void packetReceived(const NodePacket &pkt);
     void parseError(const QString &msg);
+    void summaryReceived(const SummaryData &summary); // برای ارسال داده parse‌شده‌ی packet 0x40 به UI
 
 private slots:
     void onReadyRead();
@@ -33,6 +35,7 @@ private slots:
 private:
     void processBuffer();
     bool tryParseOne(NodePacket &out);
+    bool tryParseSummary(SummaryData &out);  // برای parse کردن packet نوع 0x40
 
     QSerialPort *m_port = nullptr;
     QByteArray m_buf;
@@ -41,4 +44,5 @@ private:
     static constexpr quint8 SOF0 = 0xAA;
     static constexpr quint8 SOF1 = 0x55;
     static constexpr quint8 TYPE_NODE32 = 0x10;
+    static constexpr quint8 TYPE_SUMMARY = 0x40;  // نوع packet برای Summary high-level metrics
 };

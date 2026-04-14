@@ -18,6 +18,8 @@
 
 #include "sensordelegate.h"
 #include "sensorstatus.h"
+#include "summarydata.h"
+#include <QMetaType>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -25,11 +27,12 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
+
+    qRegisterMetaType<SummaryData>("SummaryData");  // ثبت type برای signal/slot
     /* =========================================================
      *  0) Initial UI State
      * ========================================================= */
     ui->tabs->setCurrentWidget(ui->tabHome);
-
     /* =========================================================
      *  1) Home Page (runtime-built, responsive)
      * ========================================================= */
@@ -530,6 +533,10 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&m_rx, &SerialReceiver::packetReceived,
             &m_store, &SensorStore::applyPacket);
 
+    connect(&m_rx, &SerialReceiver::summaryReceived,
+            this, &MainWindow::onSummaryReceived);  // وصل کردن SUMMARY به UI
+
+
     /* =========================================================
      *  9) Initial Refresh
      * ========================================================= */
@@ -658,6 +665,8 @@ void MainWindow::onSerialError(QSerialPort::SerialPortError e)
 void MainWindow::onPacket(const NodePacket &pkt)
 {
     const NodeState ns = nodeStateFromFlags(pkt.flags);
+
+    qDebug() << "NODE packet:" << pkt.nodeId << "cycle:" << pkt.cycle;
 
     m_lblStatusSettings->setText(
         QString("RX node=%1 cycle=%2 seq=%3 state=%4")
@@ -1011,4 +1020,97 @@ void MainWindow::updateLiveMonitoring()
     m_lblShoulders->setText("Shoulders: --");
 
     m_lblRecommendation->setText("Monitoring...");
+}
+
+
+void MainWindow::onSummaryReceived(const SummaryData &summary)
+{
+    // ---------- Risk ----------
+    QString riskLevelText;
+    switch (summary.riskLevel) {
+    case 0: riskLevelText = "LOW"; break;
+    case 1: riskLevelText = "MODERATE"; break;
+    case 2: riskLevelText = "HIGH"; break;
+    case 3: riskLevelText = "CRITICAL"; break;
+    default: riskLevelText = "UNKNOWN"; break;
+    }
+
+    if (m_lblRiskLive) {
+        m_lblRiskLive->setText(
+            QString("Risk: %1 (%2)")
+                .arg(summary.riskScore)
+                .arg(riskLevelText)
+            );
+    }
+
+    // ---------- Movement ----------
+    QString movementText;
+    if (summary.timeSinceLastMovementS == 0xFFFF) {
+        movementText = "Last Move: Unknown";
+    } else {
+        movementText = QString("Last Move: %1 s ago")
+        .arg(summary.timeSinceLastMovementS);
+    }
+
+    if (m_lblMovementLive) {
+        m_lblMovementLive->setText(movementText);
+    }
+
+    // ---------- Alert ----------
+    if (m_lblAlertsText) {
+        if (!summary.alertActive) {
+            m_lblAlertsText->setText("No alerts");
+        } else {
+            QString sevText;
+            switch (summary.alertSeverity) {
+            case 1: sevText = "low"; break;
+            case 2: sevText = "medium"; break;
+            case 3: sevText = "high"; break;
+            default: sevText = "none"; break;
+            }
+
+            m_lblAlertsText->setText(
+                QString("High pressure • %1 • %2 s")
+                    .arg(sevText)
+                    .arg(summary.alertDurationS)
+                );
+        }
+    }
+
+    // ---------- Recommendation ----------
+    if (m_lblRecommendation) {
+        QString recText;
+        switch (summary.recommendationCode) {
+        case 0: recText = "No recommendation"; break;
+        case 1: recText = "Monitor"; break;
+        case 2: recText = "Reposition patient"; break;
+        case 3: recText = "URGENT reposition"; break;
+        case 4: recText = "Offload sacrum"; break;
+        default: recText = "Unknown"; break;
+        }
+
+        m_lblRecommendation->setText(recText);
+    }
+
+    // ---------- Zones ----------
+    int sacrum = 63 - int(summary.sacrumAvg);
+    int sacrumPeak = 63 - int(summary.sacrumPeak);
+    int heelL = 63 - int(summary.heelLeftAvg);
+    int heelR = 63 - int(summary.heelRightAvg);
+
+    if (m_lblSacrum) {
+        m_lblSacrum->setText(
+            QString("Sacrum: %1 / peak %2")
+                .arg(sacrum)
+                .arg(sacrumPeak)
+            );
+    }
+
+    if (m_lblHeels) {
+        m_lblHeels->setText(
+            QString("Heels: L %1 | R %2")
+                .arg(heelL)
+                .arg(heelR)
+            );
+    }
 }
