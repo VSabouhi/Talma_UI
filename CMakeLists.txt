@@ -32,6 +32,8 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         sensorstatus.h sensorstatus.cpp
         resources.qrc
         summarydata.h
+        bedframestore.h
+        bedframestore.cpp
     )
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET Talma_UI APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR

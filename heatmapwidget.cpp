@@ -50,6 +50,13 @@ void HeatmapWidget::setStore(SensorStore *store)
     update();
 }
 
+void HeatmapWidget::setBedStore(BedFrameStore *store)
+{
+    // منبع جدید heatmap: snapshot/status کامل تخت
+    m_bedStore = store;
+    update();
+}
+
 void HeatmapWidget::setPressureRange(int highPressureValue, int noPressureValue)
 {
     m_highPressure = highPressureValue;
@@ -61,6 +68,14 @@ void HeatmapWidget::onNodeUpdated(int nodeId)
 {
     if (!m_store) return;
     update(nodeRect(nodeId));
+}
+
+void HeatmapWidget::onBedFrameUpdated(quint16 frameId)
+{
+    Q_UNUSED(frameId);
+
+    // چون کل فریم تخت عوض شده، کل widget را redraw می‌کنیم
+    update();
 }
 
 QColor HeatmapWidget::colorForValue(int v) const
@@ -122,44 +137,40 @@ void HeatmapWidget::paintEvent(QPaintEvent *event)
     for (int r = 0; r < ROWS; ++r) {
         for (int c = 0; c < COLS; ++c) {
 
-            const int nodeId    = r / 2;
-            const int rowInNode = r % 2;
-            const int sensorIdx = rowInNode * 16 + c;
+            // در مدل جدید، Heatmap مستقیماً از BED_SNAPSHOT و BED_STATUS می‌خواند
+            quint8 value = 0;
+            quint8 status = 3; // پیش‌فرض: disconnected
+            bool valid = false;
 
-            quint8 raw = makeRaw(0, SensorStatus::Disconnected);
-            NodeState nState = NodeState::Offline;
+            if (m_bedStore && m_bedStore->hasFrame()) {
+                value = m_bedStore->value(r, c);
+                status = m_bedStore->status(r, c);
 
-            if (m_store) {
-                raw = m_store->raw(nodeId, sensorIdx);
-                nState = m_store->nodeState(nodeId);
+                // طبق protocol:
+                // 0 = OK
+                // 1 = WARNING
+                // 2 = ERROR
+                // 3 = DISCONNECTED
+                valid = (status == 0 || status == 1);
             }
 
-            const quint8 value = sensorValueFromRaw(raw);
-            const SensorStatus sst = sensorStatusFromRaw(raw);
-            const bool valid = isSensorValid(raw);
-            const quint8 conf = sensorConfidence(raw);
+            const SensorStatus sst =
+                (status == 0) ? SensorStatus::Ok :
+                    (status == 1) ? SensorStatus::Warning :
+                    (status == 2) ? SensorStatus::Error :
+                    SensorStatus::Disconnected;
+
+            const quint8 conf = 255;
+
+            // BED_SNAPSHOT مقدار distance-like می‌فرستد:
+            // عدد کوچکتر = فشار بیشتر
+            // برای Heatmap فعلی آن را به pressure-like تبدیل می‌کنیم
+            value = quint8(63 - value);
 
             QRect cell(bed.x() + c * cellW,
                        bed.y() + r * cellH,
                        cellW,
                        cellH);
-
-            // اگر این نود هنوز هیچ دیتایی نگرفته، خاکستری خنثی رسم کن
-            bool nodeHasData = m_store ? m_store->hasData(nodeId) : false;
-            if (!nodeHasData) {
-                painter.setPen(Qt::NoPen);
-
-                // خاکستری نرم‌تر + کمی روشن‌تر
-                painter.setBrush(QColor(90, 90, 90));
-
-                painter.drawRoundedRect(cell, radius, radius);
-
-                // یک نقطه خیلی کوچک برای زنده بودن UI
-                painter.setPen(QColor(50, 50, 50));
-                painter.drawPoint(cell.center());
-
-                continue;
-            }
 
             // gap background
             if (gap > 0) {
@@ -206,17 +217,6 @@ void HeatmapWidget::paintEvent(QPaintEvent *event)
                 }
             }
 
-            // node state overlay
-            if (nState == NodeState::Stale) {
-                painter.setPen(Qt::NoPen);
-                painter.setBrush(QColor(255, 215, 0, 25));
-                painter.drawRoundedRect(cell, radius, radius);
-            }
-            else if (nState == NodeState::Offline) {
-                painter.setPen(Qt::NoPen);
-                painter.setBrush(QColor(0, 0, 0, 90));
-                painter.drawRoundedRect(cell, radius, radius);
-            }
         }
     }
 

@@ -13,7 +13,7 @@
 #include <QSpinBox>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
-
+#include <QDateTime>   // برای ثبت زمان آخرین دریافت Summary
 
 
 #include "sensordelegate.h"
@@ -29,6 +29,15 @@ MainWindow::MainWindow(QWidget *parent)
 
 
     qRegisterMetaType<SummaryData>("SummaryData");  // ثبت type برای signal/slot
+
+
+    // این تایمر باعث می‌شود داشبورد سمت راست با نرخ آرام‌تر refresh شود
+    // تا متن‌ها پایدار و قابل خواندن باشند.
+    m_summaryUiTimer = new QTimer(this);
+    m_summaryUiTimer->setInterval(250);  // هر 250 میلی‌ثانیه یک بار UI را آپدیت می‌کنیم
+    connect(m_summaryUiTimer, &QTimer::timeout,
+            this, &MainWindow::renderSummaryToDashboard);
+    m_summaryUiTimer->start();
     /* =========================================================
      *  0) Initial UI State
      * ========================================================= */
@@ -355,6 +364,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_heatmap->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_heatmap->setMinimumSize(620, 620);
     m_heatmap->setStore(&m_store);
+    m_heatmap->setBedStore(&m_bedStore);   // Heatmap را به storage جدید BED وصل می‌کنیم
     leftLayout->addWidget(m_heatmap, 1);
 
     // Bottom info row
@@ -362,8 +372,9 @@ MainWindow::MainWindow(QWidget *parent)
     bottomRow->setSpacing(12);
 
     m_lblRiskLive = new QLabel("Risk: --", leftPanel);
-    m_lblRiskLive->setMinimumHeight(44);
-    m_lblRiskLive->setMinimumWidth(120);
+    m_lblRiskLive->setMinimumHeight(64);   // بزرگ‌تر برای دیده شدن بهتر
+    m_lblRiskLive->setMinimumWidth(220);   // عرض بیشتر تا شبیه کارت شود
+    m_lblRiskLive->setAlignment(Qt::AlignCenter);
     m_lblRiskLive->setStyleSheet(
         "QLabel {"
         "  background-color: #1B1F24;"
@@ -378,8 +389,9 @@ MainWindow::MainWindow(QWidget *parent)
 
 
     m_lblMovementLive = new QLabel("Last Move: --", leftPanel);
-    m_lblMovementLive->setMinimumHeight(44);
-    m_lblMovementLive->setMinimumWidth(150);
+    m_lblMovementLive->setMinimumHeight(64);   // هماهنگ با کارت Risk
+    m_lblMovementLive->setMinimumWidth(220);
+    m_lblMovementLive->setAlignment(Qt::AlignCenter);
     m_lblMovementLive->setStyleSheet(
         "QLabel {"
         "  background-color: #1B1F24;"
@@ -536,6 +548,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&m_rx, &SerialReceiver::summaryReceived,
             this, &MainWindow::onSummaryReceived);  // وصل کردن SUMMARY به UI
 
+    connect(&m_rx, &SerialReceiver::bedSnapshotReceived,
+            this, &MainWindow::onBedSnapshot);   // اتصال packet 0x20 به MainWindow
+
+    connect(&m_rx, &SerialReceiver::bedStatusReceived,
+            this, &MainWindow::onBedStatus);     // اتصال packet 0x22 به MainWindow
+
+
 
     /* =========================================================
      *  9) Initial Refresh
@@ -563,6 +582,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&m_store, &SensorStore::nodeUpdated,
             this, &MainWindow::updateLiveMonitoring);
 
+    connect(&m_bedStore, &BedFrameStore::frameUpdated,
+            m_heatmap, &HeatmapWidget::onBedFrameUpdated);   // با هر frame جدید، Heatmap دوباره رسم شود
 }
 
 /*========================================================= */
@@ -575,6 +596,7 @@ MainWindow::~MainWindow()
         m_port.close();
     delete ui;
 }
+/*========================================================================================*/
 
 void MainWindow::refreshPorts()
 {
@@ -589,6 +611,7 @@ void MainWindow::refreshPorts()
         m_cmbPortSettings->addItem(port.portName());
     }
 }
+/*========================================================================================*/
 
 void MainWindow::setConnectedUi(bool connected)
 {
@@ -604,6 +627,7 @@ void MainWindow::setConnectedUi(bool connected)
     if (m_btnRefreshSettings)
         m_btnRefreshSettings->setEnabled(!connected);
 }
+/*========================================================================================*/
 
 void MainWindow::onConnectClicked()
 {
@@ -646,6 +670,7 @@ void MainWindow::onConnectClicked()
     if (m_lblStatusSettings)
         m_lblStatusSettings->setText("Connected: " + portName);
 }
+/*========================================================================================*/
 
 void MainWindow::onSerialError(QSerialPort::SerialPortError e)
 {
@@ -661,12 +686,11 @@ void MainWindow::onSerialError(QSerialPort::SerialPortError e)
     }
 
 }
+/*========================================================================================*/
 
 void MainWindow::onPacket(const NodePacket &pkt)
 {
     const NodeState ns = nodeStateFromFlags(pkt.flags);
-
-    qDebug() << "NODE packet:" << pkt.nodeId << "cycle:" << pkt.cycle;
 
     m_lblStatusSettings->setText(
         QString("RX node=%1 cycle=%2 seq=%3 state=%4")
@@ -676,6 +700,25 @@ void MainWindow::onPacket(const NodePacket &pkt)
             .arg(nodeStateText(ns))
         );
 }
+/*========================================================================================*/
+
+void MainWindow::onBedSnapshot(const BedSnapshotPacket &pkt)
+{
+    // داده‌ی خام 32x16 تخت را داخل BedFrameStore ذخیره می‌کنیم
+    m_bedStore.setSnapshot(pkt.frameId, pkt.values.data(), int(pkt.values.size()));
+
+    //qDebug() << "BED_SNAPSHOT received, frameId =" << pkt.frameId;
+}
+/*========================================================================================*/
+
+void MainWindow::onBedStatus(const BedStatusPacket &pkt)
+{
+    // status 32x16 تخت را داخل BedFrameStore ذخیره می‌کنیم
+    m_bedStore.setStatus(pkt.frameId, pkt.status.data(), int(pkt.status.size()));
+
+   // qDebug() << "BED_STATUS received, frameId =" << pkt.frameId;
+}
+/*========================================================================================*/
 
 void MainWindow::updateTableNode(int nodeId)
 {
@@ -771,12 +814,14 @@ void MainWindow::updateTableNode(int nodeId)
     ui->tblSensors->setUpdatesEnabled(true);
     ui->tblSensors->viewport()->update();
 }
+/*========================================================================================*/
 
 void MainWindow::markAllNodesState(NodeState state)
 {
     m_store.setAllNodesState(state);
 }
 
+/*========================================================================================*/
 
 void MainWindow::updateNodeSummary(int nodeId)
 {
@@ -880,6 +925,7 @@ void MainWindow::updateNodeSummary(int nodeId)
 
 }
 
+/*========================================================================================*/
 
 void MainWindow::refreshNodeCardStyles()
 {
@@ -968,6 +1014,7 @@ void MainWindow::refreshNodeCardStyles()
         }
     }
 }
+/*========================================================================================*/
 
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
@@ -1006,11 +1053,12 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
         return QMainWindow::eventFilter(obj, event);
 }
 
+/*========================================================================================*/
 
 void MainWindow::updateLiveMonitoring()
 {
     // فعلاً فقط تستی
-    m_lblRiskLive->setText("Risk: 0");
+    /*m_lblRiskLive->setText("Risk: 0");
     m_lblMovementLive->setText("Last Move: 0s");
 
     m_lblAlertsText->setText("No alerts");
@@ -1019,12 +1067,47 @@ void MainWindow::updateLiveMonitoring()
     m_lblHeels->setText("Heels: --");
     m_lblShoulders->setText("Shoulders: --");
 
-    m_lblRecommendation->setText("Monitoring...");
+    m_lblRecommendation->setText("Monitoring...");*/
 }
+/*========================================================================================*/
+/*void MainWindow::onSummaryReceived(const SummaryData &summary)
+{
+    // آخرین Summary معتبر را cache می‌کنیم
+    m_lastSummary = summary;
+    qDebug() << "SUMMARY movementDetected =" << summary.movementDetected
+             << "timeSinceLastMovementS =" << summary.timeSinceLastMovementS;
+    m_hasSummary = true;
+
+    // زمان دریافت آخرین Summary را نگه می‌داریم
+    m_lastSummaryRxMs = QDateTime::currentMSecsSinceEpoch();
+}*/
+
 
 
 void MainWindow::onSummaryReceived(const SummaryData &summary)
 {
+
+    m_lastSummary = summary;
+    m_hasSummary = true;
+    m_lastSummaryRxMs = QDateTime::currentMSecsSinceEpoch();
+}
+/*========================================================================================*/
+
+void MainWindow::renderSummaryToDashboard()
+{
+    if (!m_hasSummary)
+        return;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const bool summaryIsFresh =
+        (m_lastSummaryRxMs > 0) && ((nowMs - m_lastSummaryRxMs) <= 1500);
+
+    // فعلاً حتی اگر Summary کمی دیر برسد، آخرین داده را نگه می‌داریم
+    // تا dashboard نپرد و خوانا بماند.
+    Q_UNUSED(summaryIsFresh);
+
+    const SummaryData &summary = m_lastSummary;
+
     // ---------- Risk ----------
     QString riskLevelText;
     switch (summary.riskLevel) {
@@ -1036,47 +1119,167 @@ void MainWindow::onSummaryReceived(const SummaryData &summary)
     }
 
     if (m_lblRiskLive) {
+        QString textColor;
+        QString bgColor;
+        QString borderColor;
+
+        switch (summary.riskLevel) {
+        case 0: // LOW
+            textColor = "#A3BE8C";
+            bgColor = "#1A221C";
+            borderColor = "#2F4F3A";
+            break;
+        case 1: // MODERATE
+            textColor = "#EBCB8B";
+            bgColor = "#221F18";
+            borderColor = "#5B4B2A";
+            break;
+        case 2: // HIGH
+            textColor = "#D9A066";
+            bgColor = "#241D18";
+            borderColor = "#6A4A2C";
+            break;
+        case 3: // CRITICAL
+            textColor = "#E7C0C3";
+            bgColor = "#241718";
+            borderColor = "#6A3238";
+            break;
+        default:
+            textColor = "#D8DEE9";
+            bgColor = "#1B1F24";
+            borderColor = "#3B4252";
+            break;
+        }
+
         m_lblRiskLive->setText(
-            QString("Risk: %1 (%2)")
+            QString("RISK\n%1  |  %2")
                 .arg(summary.riskScore)
                 .arg(riskLevelText)
             );
-    }
 
+        m_lblRiskLive->setStyleSheet(QString(
+                                         "QLabel {"
+                                         "color: %1;"
+                                         "background-color: %2;"
+                                         "border: 1px solid %3;"
+                                         "font-weight: 700;"
+                                         "font-size: 16px;"
+                                         "padding: 8px 12px;"
+                                         "border-radius: 10px;"
+                                         "}"
+                                         ).arg(textColor, bgColor, borderColor));
+    }
     // ---------- Movement ----------
     QString movementText;
     if (summary.timeSinceLastMovementS == 0xFFFF) {
-        movementText = "Last Move: Unknown";
-    } else {
+            movementText = "Last Move: No movement yet";
+    } else if (summary.timeSinceLastMovementS < 60) {
         movementText = QString("Last Move: %1 s ago")
         .arg(summary.timeSinceLastMovementS);
+    } else {
+        const int minutes = int(summary.timeSinceLastMovementS) / 60;
+        movementText = QString("Last Move: %1 min ago").arg(minutes);
     }
 
     if (m_lblMovementLive) {
+        // متن movement که بالاتر ساخته شده را واقعاً روی label اعمال می‌کنیم
         m_lblMovementLive->setText(movementText);
+
+        m_lblMovementLive->setStyleSheet(
+            "QLabel {"
+            "color: #E5E9F0;"
+            "background-color: #1B1F24;"
+            "border: 1px solid #3B4252;"
+            "font-weight: 600;"
+            "font-size: 15px;"
+            "padding: 8px 12px;"
+            "border-radius: 10px;"
+            "}"
+            );
     }
 
     // ---------- Alert ----------
     if (m_lblAlertsText) {
+
         if (!summary.alertActive) {
-            m_lblAlertsText->setText("No alerts");
-        } else {
+            m_lblAlertsText->setText("No active alerts");
+            m_lblAlertsText->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
+            m_lblAlertsText->setStyleSheet(
+                "QLabel {"
+                "color: #A3BE8C;"
+                "background-color: #151C17;"
+                "border: 1px solid #2C4433;"
+                "padding: 8px 10px;"
+                "border-radius: 8px;"
+                "font-size: 13px;"
+                "font-weight: 600;"
+                "}"
+                );
+        }
+        else {
+            QString alertTypeText;
+            switch (summary.alertType) {
+            case 1: alertTypeText = "High pressure"; break;
+            default: alertTypeText = "Alert"; break;
+            }
+
             QString sevText;
+            QString textColor;
+            QString bgColor;
+            QString borderColor;
+
             switch (summary.alertSeverity) {
-            case 1: sevText = "low"; break;
-            case 2: sevText = "medium"; break;
-            case 3: sevText = "high"; break;
-            default: sevText = "none"; break;
+            case 1:
+                sevText = "LOW";
+                textColor = "#EBCB8B";
+                bgColor = "#221F18";
+                borderColor = "#5B4B2A";
+                break;
+            case 2:
+                sevText = "MEDIUM";
+                textColor = "#D9A066";
+                bgColor = "#241D18";
+                borderColor = "#6A4A2C";
+                break;
+            case 3:
+                sevText = "HIGH";
+                textColor = "#E7C0C3";
+                bgColor = "#241718";
+                borderColor = "#6A3238";
+                break;
+            default:
+                sevText = "UNKNOWN";
+                textColor = "#D8DEE9";
+                bgColor = "#1B1F24";
+                borderColor = "#3B4252";
+                break;
             }
 
             m_lblAlertsText->setText(
-                QString("High pressure • %1 • %2 s")
+                QString("%1\nSeverity: %2  •  %3 s")
+                    .arg(alertTypeText)
                     .arg(sevText)
                     .arg(summary.alertDurationS)
                 );
+
+            m_lblAlertsText->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
+            m_lblAlertsText->setStyleSheet(QString(
+                                               "QLabel {"
+                                               "color: %1;"
+                                               "background-color: %2;"
+                                               "border: 1px solid %3;"
+                                               "padding: 8px 10px;"
+                                               "border-radius: 8px;"
+                                               "font-size: 13px;"
+                                               "font-weight: 600;"
+                                               "}"
+                                               ).arg(textColor, bgColor, borderColor));
         }
     }
 
+    // ---------- Recommendation ----------
     // ---------- Recommendation ----------
     if (m_lblRecommendation) {
         QString recText;
@@ -1084,33 +1287,57 @@ void MainWindow::onSummaryReceived(const SummaryData &summary)
         case 0: recText = "No recommendation"; break;
         case 1: recText = "Monitor"; break;
         case 2: recText = "Reposition patient"; break;
-        case 3: recText = "URGENT reposition"; break;
+        case 3: recText = "Urgent reposition"; break;
         case 4: recText = "Offload sacrum"; break;
-        default: recText = "Unknown"; break;
+        default: recText = "Unknown recommendation"; break;
         }
 
-        m_lblRecommendation->setText(recText);
+        // اگر recommendation مهم باشد، کمی برجسته‌تر نمایش می‌دهیم
+        const bool urgent =
+            (summary.recommendationCode == 3) || (summary.recommendationPriority >= 3);
+
+        QString textColor = urgent ? "#E7C0C3" : "#D8DEE9";
+        QString bgColor = urgent ? "#241718" : "#1B1F24";
+        QString borderColor = urgent ? "#6A3238" : "#3B4252";
+
+        m_lblRecommendation->setText(
+            QString("Action\n%1").arg(recText)
+            );
+
+        m_lblRecommendation->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
+        m_lblRecommendation->setStyleSheet(QString(
+                                               "QLabel {"
+                                               "color: %1;"
+                                               "background-color: %2;"
+                                               "border: 1px solid %3;"
+                                               "padding: 8px 10px;"
+                                               "border-radius: 8px;"
+                                               "font-size: 13px;"
+                                               "font-weight: 600;"
+                                               "}"
+                                               ).arg(textColor, bgColor, borderColor));
     }
 
     // ---------- Zones ----------
-    int sacrum = 63 - int(summary.sacrumAvg);
-    int sacrumPeak = 63 - int(summary.sacrumPeak);
-    int heelL = 63 - int(summary.heelLeftAvg);
-    int heelR = 63 - int(summary.heelRightAvg);
+    const int sacrumPressureLike = 63 - int(summary.sacrumAvg);
+    const int sacrumPeakPressureLike = 63 - int(summary.sacrumPeak);
+    const int heelLeftPressureLike = 63 - int(summary.heelLeftAvg);
+    const int heelRightPressureLike = 63 - int(summary.heelRightAvg);
 
     if (m_lblSacrum) {
         m_lblSacrum->setText(
-            QString("Sacrum: %1 / peak %2")
-                .arg(sacrum)
-                .arg(sacrumPeak)
+            QString("Sacrum: avg %1 | peak %2")
+                .arg(sacrumPressureLike)
+                .arg(sacrumPeakPressureLike)
             );
     }
 
     if (m_lblHeels) {
         m_lblHeels->setText(
             QString("Heels: L %1 | R %2")
-                .arg(heelL)
-                .arg(heelR)
+                .arg(heelLeftPressureLike)
+                .arg(heelRightPressureLike)
             );
     }
 }

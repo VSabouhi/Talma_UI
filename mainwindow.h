@@ -15,8 +15,8 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include "summarydata.h"  // برای دریافت داده Summary از SerialReceiver
-
-
+#include "bedframestore.h"   // برای نگهداری داده‌های BED_SNAPSHOT و BED_STATUS
+#include <QTimer>   // برای محدود کردن نرخ refresh داشبورد
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -37,6 +37,7 @@ private:
     QSerialPort m_port;
     SerialReceiver m_rx;
     SensorStore m_store;
+    BedFrameStore m_bedStore;   // storage جدید برای packetهای 0x20 و 0x22
     HeatmapWidget *m_heatmap = nullptr;
     QGridLayout *m_nodeSummaryLayout = nullptr;
     QVector<QFrame*> m_nodeCards;
@@ -66,6 +67,10 @@ private:
     QLabel *m_lblRiskLive = nullptr;
     QLabel *m_lblMovementLive = nullptr;
 
+    SummaryData m_lastSummary;         // آخرین Summary دریافت‌شده از MCU
+    bool m_hasSummary = false;         // آیا تاکنون Summary معتبر گرفته‌ایم؟
+    QTimer *m_summaryUiTimer = nullptr; // تایمر برای stable کردن refresh داشبورد
+    qint64 m_lastSummaryRxMs = -1;   // زمان آخرین دریافت Summary برای جلوگیری از خالی شدن لحظه‌ای داشبورد
     QLabel *m_lblAlertsText = nullptr;
 
     QLabel *m_lblSacrum = nullptr;
@@ -76,6 +81,7 @@ private:
 
     void refreshPorts();
     void setConnectedUi(bool connected);
+    void renderSummaryToDashboard();   // آخرین Summary cache شده را با نرخ کنترل‌شده روی UI نمایش می‌دهد
     void updateTableNode(int nodeId);
     void markAllNodesState(NodeState state);
     void updateNodeSummary(int nodeId);
@@ -85,6 +91,8 @@ private slots:
     void onConnectClicked();
     void onSerialError(QSerialPort::SerialPortError e);
     void onPacket(const NodePacket &pkt);
+    void onBedSnapshot(const BedSnapshotPacket &pkt);  // دریافت snapshot تخت از packet 0x20
+    void onBedStatus(const BedStatusPacket &pkt);      // دریافت status تخت از packet 0x22
     void updateLiveMonitoring();
     void onSummaryReceived(const SummaryData &summary);  // دریافت داده 0x40 از MCU
 

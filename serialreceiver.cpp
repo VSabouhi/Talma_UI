@@ -1,4 +1,6 @@
 #include "serialreceiver.h"
+#include <QDebug>
+
 /*========================================================================================*/
 
 /*========================================================================================*/
@@ -72,7 +74,7 @@ void SerialReceiver::processBuffer()
 
         const quint8 type = quint8(m_buf[2]);
 
-        // اگر packet از نوع NODE32 باشد، مثل قبل parse می‌شود
+        // ---------------- NODE32 ----------------
         if (type == TYPE_NODE32) {
             if (m_buf.size() < PKT_LEN)
                 return;
@@ -87,7 +89,41 @@ void SerialReceiver::processBuffer()
             m_buf.remove(0, PKT_LEN);
             emit packetReceived(pkt);
         }
-        // اگر packet از نوع SUMMARY باشد، داخل SummaryData parse می‌شود
+        // ---------------- BED SNAPSHOT (0x20) ----------------
+        else if (type == TYPE_BED_SNAPSHOT) {
+            static constexpr int BED_PKT_LEN = 522;
+
+            if (m_buf.size() < BED_PKT_LEN)
+                return;
+
+            BedSnapshotPacket pkt;
+            if (!tryParseBedSnapshot(pkt)) {
+                m_buf.remove(0, 1);
+                emit parseError("Invalid BED_SNAPSHOT packet, resyncing...");
+                continue;
+            }
+
+            m_buf.remove(0, BED_PKT_LEN);
+            emit bedSnapshotReceived(pkt);
+        }
+        // ---------------- BED STATUS (0x22) ----------------
+        else if (type == TYPE_BED_STATUS) {
+            static constexpr int BED_PKT_LEN = 522;
+
+            if (m_buf.size() < BED_PKT_LEN)
+                return;
+
+            BedStatusPacket pkt;
+            if (!tryParseBedStatus(pkt)) {
+                m_buf.remove(0, 1);
+                emit parseError("Invalid BED_STATUS packet, resyncing...");
+                continue;
+            }
+
+            m_buf.remove(0, BED_PKT_LEN);
+            emit bedStatusReceived(pkt);
+        }
+        // ---------------- SUMMARY (0x40) ----------------
         else if (type == TYPE_SUMMARY) {
             static constexpr int SUMMARY_LEN = 24;
 
@@ -102,9 +138,13 @@ void SerialReceiver::processBuffer()
             }
 
             m_buf.remove(0, SUMMARY_LEN);
+           /* qDebug() << "SUMMARY parsed:"
+                     << "frameId =" << summary.frameId
+                     << "risk =" << summary.riskScore
+                     << "movement =" << summary.timeSinceLastMovementS;*/
             emit summaryReceived(summary);
         }
-        // اگر type ناشناخته بود، یک بایت جلو می‌رویم تا resync کنیم
+        // ---------------- UNKNOWN ----------------
         else {
             m_buf.remove(0, 1);
             emit parseError(QString("Unknown packet type: 0x%1")
@@ -134,6 +174,79 @@ bool SerialReceiver::tryParseOne(NodePacket &out)
     out.crc0 = (quint8)m_buf[40];
     out.crc1 = (quint8)m_buf[41];
 
+    return true;
+}
+/*========================================================================================*/
+
+bool SerialReceiver::tryParseBedSnapshot(BedSnapshotPacket &out)
+{
+    static constexpr int BED_PKT_LEN = 522;
+
+    // هنوز کل packet نرسیده
+    if (m_buf.size() < BED_PKT_LEN)
+        return false;
+
+    // هدر باید درست باشد
+    if ((quint8)m_buf[0] != SOF0 || (quint8)m_buf[1] != SOF1)
+        return false;
+
+    // این parser فقط برای 0x20 است
+    if ((quint8)m_buf[2] != TYPE_BED_SNAPSHOT)
+        return false;
+
+    out.type = (quint8)m_buf[2];
+    out.seq = (quint8)m_buf[3];
+    out.frameId = quint16((quint8)m_buf[4]) | (quint16((quint8)m_buf[5]) << 8);
+    out.rows = (quint8)m_buf[6];
+    out.cols = (quint8)m_buf[7];
+
+    // فعلاً انتظار داریم دقیقاً 32x16 باشد
+    if (out.rows != 32 || out.cols != 16)
+        return false;
+
+    for (int i = 0; i < 512; ++i)
+        out.values[i] = (quint8)m_buf[8 + i];
+
+    out.crc0 = (quint8)m_buf[520];
+    out.crc1 = (quint8)m_buf[521];
+
+    // CRC فعلاً placeholder است، validate واقعی نداریم
+    return true;
+}
+/*========================================================================================*/
+bool SerialReceiver::tryParseBedStatus(BedStatusPacket &out)
+{
+    static constexpr int BED_PKT_LEN = 522;
+
+    // هنوز کل packet نرسیده
+    if (m_buf.size() < BED_PKT_LEN)
+        return false;
+
+    // هدر باید درست باشد
+    if ((quint8)m_buf[0] != SOF0 || (quint8)m_buf[1] != SOF1)
+        return false;
+
+    // این parser فقط برای 0x22 است
+    if ((quint8)m_buf[2] != TYPE_BED_STATUS)
+        return false;
+
+    out.type = (quint8)m_buf[2];
+    out.seq = (quint8)m_buf[3];
+    out.frameId = quint16((quint8)m_buf[4]) | (quint16((quint8)m_buf[5]) << 8);
+    out.rows = (quint8)m_buf[6];
+    out.cols = (quint8)m_buf[7];
+
+    // فعلاً انتظار داریم دقیقاً 32x16 باشد
+    if (out.rows != 32 || out.cols != 16)
+        return false;
+
+    for (int i = 0; i < 512; ++i)
+        out.status[i] = (quint8)m_buf[8 + i];
+
+    out.crc0 = (quint8)m_buf[520];
+    out.crc1 = (quint8)m_buf[521];
+
+    // CRC فعلاً placeholder است، validate واقعی نداریم
     return true;
 }
 

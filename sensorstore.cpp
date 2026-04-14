@@ -79,16 +79,6 @@ void SensorStore::applyPacket(const NodePacket &pkt)
 
     for (int i = 0; i < SENS; ++i) {
 
-        quint8 raw = pkt.sensors[i];
-
-        quint8 value = raw & 0x3F;
-        quint8 status = (raw >> 6) & 0x03;
-
-        qDebug() << "Sensor" << i
-                 << "raw:" << raw
-                 << "value:" << value
-                 << "status:" << status;
-
 
         if (m_raw[pkt.nodeId][i] != pkt.sensors[i]) {
             m_raw[pkt.nodeId][i] = pkt.sensors[i];
