@@ -1,0 +1,23 @@
+# Local config (خیلی مهم)
+config.local.json
+
+# Qt build files
+build/
+Debug/
+Release/
+
+# Qt Creator
+*.pro.user
+*.pro.user.*
+*.autosave
+
+# Object files
+*.o
+*.obj
+
+# Executables
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
