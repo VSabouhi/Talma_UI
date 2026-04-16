@@ -347,6 +347,24 @@ MainWindow::MainWindow(QWidget *parent)
     leftLayout->setContentsMargins(0, 0, 0, 0);
     leftLayout->setSpacing(8);
 
+
+    // Frame sync status
+    m_lblFrameSync = new QLabel("Frame: waiting...", leftPanel);
+    m_lblFrameSync->setMinimumHeight(22);
+    m_lblFrameSync->setStyleSheet(
+        "QLabel {"
+        "  color: #AAB4BE;"
+        "  background-color: #14181D;"
+        "  border: 1px solid #2E3440;"
+        "  border-radius: 6px;"
+        "  padding: 3px 8px;"
+        "  font-size: 11px;"
+        "  font-weight: 500;"
+        "}"
+        );
+    leftLayout->addWidget(m_lblFrameSync, 0, Qt::AlignLeft);
+
+
     // Title
     QLabel *title = new QLabel("Live Pressure Heatmap", leftPanel);
     title->setStyleSheet(
@@ -431,17 +449,42 @@ MainWindow::MainWindow(QWidget *parent)
     // Zones
     QGroupBox *grpZones = new QGroupBox("Body Zones", rightPanel);
     QVBoxLayout *zonesLay = new QVBoxLayout(grpZones);
-    m_lblSacrum = new QLabel("Sacrum: --", grpZones);
-    m_lblHeels = new QLabel("Heels: --", grpZones);
-    m_lblShoulders = new QLabel("Shoulders: --", grpZones);
 
-    m_lblSacrum->setStyleSheet("color:#D8DEE9; padding:2px;");
-    m_lblHeels->setStyleSheet("color:#D8DEE9; padding:2px;");
-    m_lblShoulders->setStyleSheet("color:#D8DEE9; padding:2px;");
+    // کارت Sacrum
+    m_lblSacrum = new QLabel("SACRUM\n--", grpZones);
 
+    // کارت Heel Left
+    m_lblHeelLeft = new QLabel("LEFT HEEL\n--", grpZones);
+
+    // کارت Heel Right
+    m_lblHeelRight = new QLabel("RIGHT HEEL\n--", grpZones);
+
+    // اگر فعلاً shoulders را نگه می‌داری، همین‌جا بماند
+    //m_lblShoulders = new QLabel("Shoulders: --", grpZones);
+
+    // استایل پایه برای کارت‌های zone
+    const QString zoneCardStyle =
+        "QLabel {"
+        "color: #D8DEE9;"
+        "background-color: #1B1F24;"
+        "border: 1px solid #3B4252;"
+        "padding: 10px;"
+        "border-radius: 10px;"
+        "font-weight: 600;"
+        "}";
+
+    m_lblSacrum->setStyleSheet(zoneCardStyle);
+    m_lblHeelLeft->setStyleSheet(zoneCardStyle);
+    m_lblHeelRight->setStyleSheet(zoneCardStyle);
+
+    // اضافه شدن به layout زون‌ها
     zonesLay->addWidget(m_lblSacrum);
-    zonesLay->addWidget(m_lblHeels);
-    zonesLay->addWidget(m_lblShoulders);
+    zonesLay->addWidget(m_lblHeelLeft);
+    zonesLay->addWidget(m_lblHeelRight);
+
+    // اگر فعلاً shoulders لازم نیست، این خط را کامنت کن
+    // zonesLay->addWidget(m_lblShoulders);
+
     rightLayout->addWidget(grpZones);
 
     // Recommendation
@@ -554,6 +597,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&m_rx, &SerialReceiver::bedStatusReceived,
             this, &MainWindow::onBedStatus);     // اتصال packet 0x22 به MainWindow
 
+    connect(&m_rx, &SerialReceiver::nodeHealthReceived,
+            this, &MainWindow::onNodeHealth);   // اتصال packet 0x30 به MainWindow
 
 
     /* =========================================================
@@ -707,7 +752,11 @@ void MainWindow::onBedSnapshot(const BedSnapshotPacket &pkt)
     // داده‌ی خام 32x16 تخت را داخل BedFrameStore ذخیره می‌کنیم
     m_bedStore.setSnapshot(pkt.frameId, pkt.values.data(), int(pkt.values.size()));
 
-    //qDebug() << "BED_SNAPSHOT received, frameId =" << pkt.frameId;
+    // Frame sync state
+    m_frameSync.snapshotFrameId = pkt.frameId;
+    m_frameSync.hasSnapshot = true;
+
+    // qDebug() << "BED_SNAPSHOT received, frameId =" << pkt.frameId;
 }
 /*========================================================================================*/
 
@@ -716,7 +765,11 @@ void MainWindow::onBedStatus(const BedStatusPacket &pkt)
     // status 32x16 تخت را داخل BedFrameStore ذخیره می‌کنیم
     m_bedStore.setStatus(pkt.frameId, pkt.status.data(), int(pkt.status.size()));
 
-   // qDebug() << "BED_STATUS received, frameId =" << pkt.frameId;
+    // Frame sync state
+    m_frameSync.statusFrameId = pkt.frameId;
+    m_frameSync.hasStatus = true;
+
+    // qDebug() << "BED_STATUS received, frameId =" << pkt.frameId;
 }
 /*========================================================================================*/
 
@@ -1086,10 +1139,13 @@ void MainWindow::updateLiveMonitoring()
 
 void MainWindow::onSummaryReceived(const SummaryData &summary)
 {
-
     m_lastSummary = summary;
     m_hasSummary = true;
     m_lastSummaryRxMs = QDateTime::currentMSecsSinceEpoch();
+
+    // Frame sync state
+    m_frameSync.summaryFrameId = summary.frameId;
+    m_frameSync.hasSummary = true;
 }
 /*========================================================================================*/
 
@@ -1107,6 +1163,46 @@ void MainWindow::renderSummaryToDashboard()
     Q_UNUSED(summaryIsFresh);
 
     const SummaryData &summary = m_lastSummary;
+
+    // ---------- Frame Sync Status ----------
+    // ---------- Frame Sync Status ----------
+    if (m_lblFrameSync) {
+        if (isCurrentFrameSynchronized()) {
+            m_lblFrameSync->setText(
+                QString("Frame %1  •  synced").arg(summary.frameId)
+                );
+
+            m_lblFrameSync->setStyleSheet(
+                "QLabel {"
+                "  color: #8BC48E;"
+                "  background-color: #152019;"
+                "  border: 1px solid #2F4F3A;"
+                "  border-radius: 6px;"
+                "  padding: 3px 8px;"
+                "  font-size: 11px;"
+                "  font-weight: 600;"
+                "}"
+                );
+        } else {
+            m_lblFrameSync->setText(
+                QString("Frame %1  •  waiting").arg(summary.frameId)
+                );
+
+            m_lblFrameSync->setStyleSheet(
+                "QLabel {"
+                "  color: #D8C07A;"
+                "  background-color: #221F18;"
+                "  border: 1px solid #5B4B2A;"
+                "  border-radius: 6px;"
+                "  padding: 3px 8px;"
+                "  font-size: 11px;"
+                "  font-weight: 600;"
+                "}"
+                );
+        }
+    }
+
+
 
     // ---------- Risk ----------
     QString riskLevelText;
@@ -1325,19 +1421,151 @@ void MainWindow::renderSummaryToDashboard()
     const int heelLeftPressureLike = 63 - int(summary.heelLeftAvg);
     const int heelRightPressureLike = 63 - int(summary.heelRightAvg);
 
+    // ---------- ZONES (Card Style) ----------
+
+    // Sacrum
     if (m_lblSacrum) {
+
+        QString riskTag;
+        QString color;
+
+        if (sacrumPressureLike > 45) {
+            riskTag = "HIGH";
+            color = "#E07A7A";
+        } else if (sacrumPressureLike > 30) {
+            riskTag = "MED";
+            color = "#EBCB8B";
+        } else {
+            riskTag = "OK";
+            color = "#A3BE8C";
+        }
+
         m_lblSacrum->setText(
-            QString("Sacrum: avg %1 | peak %2")
+            QString("SACRUM\nAvg: %1  Peak: %2\n%3")
                 .arg(sacrumPressureLike)
                 .arg(sacrumPeakPressureLike)
+                .arg(riskTag)
             );
+
+        m_lblSacrum->setStyleSheet(QString(
+                                       "QLabel {"
+                                       "color: %1;"
+                                       "background-color: #1B1F24;"
+                                       "border: 1px solid #3B4252;"
+                                       "padding: 10px;"
+                                       "border-radius: 10px;"
+                                       "font-weight: 600;"
+                                       "}"
+                                       ).arg(color));
     }
 
-    if (m_lblHeels) {
-        m_lblHeels->setText(
-            QString("Heels: L %1 | R %2")
-                .arg(heelLeftPressureLike)
-                .arg(heelRightPressureLike)
+    // Left Heel
+    if (m_lblHeelLeft) {
+
+        int val = heelLeftPressureLike;
+
+        QString color = (val > 40) ? "#E07A7A" :
+                            (val > 25) ? "#EBCB8B" :
+                            "#A3BE8C";
+
+        m_lblHeelLeft->setText(
+            QString("LEFT HEEL\n%1").arg(val)
             );
+
+        m_lblHeelLeft->setStyleSheet(QString(
+                                         "QLabel {"
+                                         "color: %1;"
+                                         "background-color: #1B1F24;"
+                                         "border: 1px solid #3B4252;"
+                                         "padding: 10px;"
+                                         "border-radius: 10px;"
+                                         "font-weight: 600;"
+                                         "}"
+                                         ).arg(color));
+    }
+
+    // Right Heel
+    if (m_lblHeelRight) {
+
+        int val = heelRightPressureLike;
+
+        QString color = (val > 40) ? "#E07A7A" :
+                            (val > 25) ? "#EBCB8B" :
+                            "#A3BE8C";
+
+        m_lblHeelRight->setText(
+            QString("RIGHT HEEL\n%1").arg(val)
+            );
+
+        m_lblHeelRight->setStyleSheet(QString(
+                                          "QLabel {"
+                                          "color: %1;"
+                                          "background-color: #1B1F24;"
+                                          "border: 1px solid #3B4252;"
+                                          "padding: 10px;"
+                                          "border-radius: 10px;"
+                                          "font-weight: 600;"
+                                          "}"
+                                          ).arg(color));
     }
 }
+
+/*========================================================================================*/
+void MainWindow::onNodeHealth(const NodeHealthPacket &pkt)
+{
+    // packet 0x30 وضعیت 16 نود را می‌دهد.
+    // برای استفاده از UI فعلی، state هر نود را داخل SensorStore می‌نویسیم.
+    // در نتیجه updateNodeSummary / refreshNodeCardStyles با همان مسیر فعلی کار می‌کنند.
+
+    const int count = qMin(int(pkt.nodeCount), SensorStore::NODES);
+
+    for (int i = 0; i < count; ++i) {
+        NodeState state = NodeState::Offline;
+
+        switch (pkt.nodeState[i]) {
+        case 1:
+            state = NodeState::Online;
+            break;
+        case 2:
+            state = NodeState::Stale;
+            break;
+        case 0:
+        default:
+            state = NodeState::Offline;
+            break;
+        }
+
+        m_store.setNodeState(i, state);
+    }
+
+    // اگر packet کمتر از 16 نود داشت، بقیه را آفلاین در نظر می‌گیریم
+    for (int i = count; i < SensorStore::NODES; ++i) {
+        m_store.setNodeState(i, NodeState::Offline);
+    }
+
+    m_frameSync.nodeHealthFrameId = pkt.frameId;
+    m_frameSync.hasNodeHealth = true;
+
+    // این debug فعلاً مفیده؛ بعداً اگر خواستی پاکش می‌کنیم
+    qDebug() << "NODE_HEALTH applied, frameId =" << pkt.frameId
+             << "nodeCount =" << pkt.nodeCount;
+}
+/*========================================================================================*/
+bool MainWindow::isCurrentFrameSynchronized() const
+{
+    // فقط وقتی sync معتبر است که هر 4 packet را گرفته باشیم
+    if (!m_frameSync.hasSnapshot ||
+        !m_frameSync.hasStatus ||
+        !m_frameSync.hasNodeHealth ||
+        !m_frameSync.hasSummary) {
+        return false;
+    }
+
+    const quint16 f = m_frameSync.snapshotFrameId;
+
+    return (m_frameSync.statusFrameId == f) &&
+           (m_frameSync.nodeHealthFrameId == f) &&
+           (m_frameSync.summaryFrameId == f);
+}
+/*========================================================================================*/
+

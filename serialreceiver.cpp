@@ -68,7 +68,8 @@ void SerialReceiver::processBuffer()
         if (sof > 0)
             m_buf.remove(0, sof);
 
-        if (m_buf.size() < PKT_LEN)
+        // فعلاً فقط برای خواندن TYPE به 3 بایت اول نیاز داریم
+        if (m_buf.size() < 3)
             return;
 
 
@@ -122,6 +123,24 @@ void SerialReceiver::processBuffer()
 
             m_buf.remove(0, BED_PKT_LEN);
             emit bedStatusReceived(pkt);
+        }
+        // ---------------- NODE HEALTH (0x30) ----------------
+        else if (type == TYPE_NODE_HEALTH) {
+            static constexpr int NODE_HEALTH_LEN = 26;
+
+            if (m_buf.size() < NODE_HEALTH_LEN)
+                return;
+
+            NodeHealthPacket nh;
+            if (!tryParseNodeHealth(nh)) {
+                m_buf.remove(0, 1);
+                emit parseError("Invalid NODE_HEALTH packet, resyncing...");
+                continue;
+            }
+
+            // توجه:
+            // tryParseNodeHealth خودش packet را از buffer حذف می‌کند
+            emit nodeHealthReceived(nh);
         }
         // ---------------- SUMMARY (0x40) ----------------
         else if (type == TYPE_SUMMARY) {
@@ -250,6 +269,44 @@ bool SerialReceiver::tryParseBedStatus(BedStatusPacket &out)
     return true;
 }
 
+/*========================================================================================*/
+
+bool SerialReceiver::tryParseNodeHealth(NodeHealthPacket &out)
+{
+    // طول کل packet باید حداقل 26 بایت باشد
+    if (m_buf.size() < 26)
+        return false;
+
+    const quint8 *d = reinterpret_cast<const quint8*>(m_buf.constData());
+
+    // بررسی header
+    if (d[0] != 0xAA || d[1] != 0x55)
+        return false;
+
+    if (d[2] != TYPE_NODE_HEALTH)
+        return false;
+
+    // پر کردن struct
+    out.type = d[2];
+    out.seq  = d[3];
+
+    out.frameId = quint16(d[4]) | (quint16(d[5]) << 8);
+
+    out.nodeCount = d[6];
+    out.reserved  = d[7];
+
+    for (int i = 0; i < 16; ++i) {
+        out.nodeState[i] = d[8 + i];
+    }
+
+    out.crc0 = d[24];
+    out.crc1 = d[25];
+
+    // حذف packet از buffer
+    m_buf.remove(0, 26);
+
+    return true;
+}
 /*========================================================================================*/
 
 bool SerialReceiver::tryParseSummary(SummaryData &out)

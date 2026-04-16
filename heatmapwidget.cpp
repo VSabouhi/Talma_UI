@@ -225,6 +225,82 @@ void HeatmapWidget::paintEvent(QPaintEvent *event)
     painter.drawText(bed.adjusted(0, -18, 0, 0), Qt::AlignHCenter, "HEAD");
     painter.drawText(bed.adjusted(0, 0, 0, 18),
                      Qt::AlignHCenter | Qt::AlignBottom, "FOOT");
+
+
+    // ================= ZONE OVERLAY =================
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    const int rows = 32;
+    const int cols = 16;
+
+    // سبک خط خیلی subtle
+    QPen pen(QColor(200, 200, 200, 90));
+    pen.setWidth(1);
+    p.setPen(pen);
+
+    QFont f = p.font();
+    f.setPointSize(8);
+    p.setFont(f);
+
+    // -------- Sacrum (مرکز تخت) --------
+    {
+        int r0 = 12;
+        int r1 = 20;
+        int c0 = 4;
+        int c1 = 12;
+
+        QRectF rect(c0 * float(cellW),
+                    r0 * float(cellH),
+                    (c1 - c0) * float(cellW),
+                    (r1 - r0) * float(cellH));
+
+        p.drawRoundedRect(rect, 6, 6);
+
+        p.drawText(rect.adjusted(4, 4, -4, -4),
+                   Qt::AlignTop | Qt::AlignLeft,
+                   "Sacrum");
+    }
+
+    // -------- Left Heel --------
+    {
+        int r0 = 26;
+        int r1 = 31;
+        int c0 = 0;
+        int c1 = 4;
+
+        QRectF rect(c0 * float(cellW),
+                    r0 * float(cellH),
+                    (c1 - c0) * float(cellW),
+                    (r1 - r0) * float(cellH));
+
+        p.drawRoundedRect(rect, 4, 4);
+
+        p.drawText(rect.adjusted(2, 2, -2, -2),
+                   Qt::AlignTop | Qt::AlignLeft,
+                   "L Heel");
+    }
+
+    // -------- Right Heel --------
+    {
+        int r0 = 26;
+        int r1 = 31;
+        int c0 = 12;
+        int c1 = 16;
+
+        QRectF rect(c0 * float(cellW),
+                    r0 * float(cellH),
+                    (c1 - c0) * float(cellW),
+                    (r1 - r0) * float(cellH));
+
+        p.drawRoundedRect(rect, 4, 4);
+
+        p.drawText(rect.adjusted(2, 2, -2, -2),
+                   Qt::AlignTop | Qt::AlignLeft,
+                   "R Heel");
+    }
+
+
 }
 
 QRect HeatmapWidget::nodeRect(int nodeId) const

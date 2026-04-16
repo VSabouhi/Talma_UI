@@ -42,7 +42,18 @@ struct BedStatusPacket {
     quint8 crc1;        // Byte521
 };
 
-
+// packet نوع 0x30
+// وضعیت همه 16 نود را یکجا نگه می‌دارد
+struct NodeHealthPacket {
+    quint8 type;        // Byte2 = 0x30
+    quint8 seq;         // Byte3
+    quint16 frameId;    // Byte4-5
+    quint8 nodeCount;   // Byte6
+    quint8 reserved;    // Byte7
+    std::array<quint8, 16> nodeState; // Byte8-23
+    quint8 crc0;        // Byte24
+    quint8 crc1;        // Byte25
+};
 
 class SerialReceiver : public QObject {
     Q_OBJECT
@@ -57,6 +68,7 @@ signals:
     void parseError(const QString &msg);
     void bedSnapshotReceived(const BedSnapshotPacket &pkt);  // برای ارسال packet نوع 0x20 به بقیه برنامه
     void bedStatusReceived(const BedStatusPacket &pkt);      // برای ارسال packet نوع 0x22 به بقیه برنامه
+    void nodeHealthReceived(const NodeHealthPacket &pkt);  // برای ارسال packet نوع 0x30 به MainWindow
     void summaryReceived(const SummaryData &summary); // برای ارسال داده parse‌شده‌ی packet 0x40 به UI
 
 private slots:
@@ -68,6 +80,7 @@ private:
     bool tryParseSummary(SummaryData &out);  // برای parse کردن packet نوع 0x40
     bool tryParseBedSnapshot(BedSnapshotPacket &out);  // برای parse کردن packet نوع 0x20
     bool tryParseBedStatus(BedStatusPacket &out);      // برای parse کردن packet نوع 0x22
+    bool tryParseNodeHealth(NodeHealthPacket &out);   // برای parse کردن packet نوع 0x30
 
     QSerialPort *m_port = nullptr;
     QByteArray m_buf;
@@ -77,6 +90,7 @@ private:
     static constexpr quint8 SOF1 = 0x55;
     static constexpr quint8 TYPE_NODE32 = 0x10;
     static constexpr quint8 TYPE_SUMMARY = 0x40;  // نوع packet برای Summary high-level metrics
+    static constexpr quint8 TYPE_NODE_HEALTH = 0x30;  // نوع packet برای وضعیت 16 نود
     static constexpr quint8 TYPE_BED_SNAPSHOT = 0x20;  // نوع packet برای کل snapshot تخت
     static constexpr quint8 TYPE_BED_STATUS   = 0x22;  // نوع packet برای status کل تخت
 };
