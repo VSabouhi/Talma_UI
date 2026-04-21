@@ -27,6 +27,10 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
+    // NEW: ساخت تب مستقل Debug و اضافه کردن به TabWidget
+    m_tabDebug = new QWidget();
+    m_tabDebug->setObjectName("tabDebug");
+    ui->tabs->addTab(m_tabDebug, "Debug");
 
     qRegisterMetaType<SummaryData>("SummaryData");  // ثبت type برای signal/slot
 
@@ -143,9 +147,9 @@ MainWindow::MainWindow(QWidget *parent)
             return card;
         };
 
-        m_cardHeatmap  = makeCard("Heatmap Monitoring", "E:/Gallary/QtPractice/Qt Workspace/TalmaCanHeatMapProj9/icon/heatmap.png");
-        m_cardData     = makeCard("Data Monitoring",    "E:/Gallary/QtPractice/Qt Workspace/TalmaCanHeatMapProj9/icon/data.png");
-        m_cardSettings = makeCard("Settings",           "E:/Gallary/QtPractice/Qt Workspace/TalmaCanHeatMapProj9/icon/settings.png");
+        m_cardHeatmap  = makeCard("Heatmap Monitoring", "D:/gKteso/TALMA/Software/Qt/Talma_UI/icon/heatmap.png");
+        m_cardData     = makeCard("Data Monitoring",    "D:/gKteso/TALMA/Software/Qt/Talma_UI/icon/data.png");
+        m_cardSettings = makeCard("Settings",           "D:/gKteso/TALMA/Software/Qt/Talma_UI/icon/settings.png");
 
         m_cardHeatmap->installEventFilter(this);
         m_cardData->installEventFilter(this);
@@ -254,6 +258,214 @@ MainWindow::MainWindow(QWidget *parent)
 
         // پایین
         settingsRootLayout->addStretch(1);
+    }
+
+    /* =========================================================
+     *  2.5) Debug Page (runtime-built, separate from Settings)
+     * ========================================================= */
+    {
+        QVBoxLayout *debugRootLayout = qobject_cast<QVBoxLayout*>(m_tabDebug->layout());
+        if (!debugRootLayout) {
+            debugRootLayout = new QVBoxLayout(m_tabDebug);
+        }
+
+        debugRootLayout->setContentsMargins(0, 0, 0, 0);
+        debugRootLayout->setSpacing(0);
+
+        debugRootLayout->addStretch(1);
+
+        m_debugContentHost = new QFrame(m_tabDebug);
+        m_debugContentHost->setObjectName("debugContentHost");
+        m_debugContentHost->setMinimumSize(700, 260);
+        m_debugContentHost->setMaximumWidth(900);
+        m_debugContentHost->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+        m_debugContentHost->setStyleSheet(
+            "#debugContentHost {"
+            "  background-color: rgb(60, 60, 95);"
+            "  border-radius: 8px;"
+            "}"
+            );
+
+        QVBoxLayout *debugContentLayout = new QVBoxLayout(m_debugContentHost);
+        debugContentLayout->setContentsMargins(20, 20, 20, 20);
+        debugContentLayout->setSpacing(16);
+
+        // عنوان
+        m_lblDebugTitle = new QLabel("Technical Debug Tools", m_debugContentHost);
+        m_lblDebugTitle->setStyleSheet(
+            "QLabel {"
+            "  font-size: 18px;"
+            "  font-weight: 700;"
+            "  color: #F2F4F8;"
+            "}"
+            );
+        debugContentLayout->addWidget(m_lblDebugTitle, 0, Qt::AlignLeft);
+
+        // گروه Visual Debug
+        QGroupBox *grpVisualDebug = new QGroupBox("Visual Debug", m_debugContentHost);
+        grpVisualDebug->setStyleSheet(
+            "QGroupBox {"
+            "  border: 1px solid #2D3742;"
+            "  border-radius: 10px;"
+            "  margin-top: 10px;"
+            "  padding-top: 12px;"
+            "  background-color: #15191E;"
+            "  font-size: 14px;"
+            "  font-weight: 600;"
+            "}"
+            "QGroupBox::title {"
+            "  subcontrol-origin: margin;"
+            "  left: 10px;"
+            "  padding: 0 4px 0 4px;"
+            "  color: #E7ECF3;"
+            "}"
+            );
+
+        QVBoxLayout *visualDebugLayout = new QVBoxLayout(grpVisualDebug);
+        visualDebugLayout->setContentsMargins(14, 12, 14, 12);
+        visualDebugLayout->setSpacing(10);
+
+        m_chkShowDebugText = new QCheckBox("Show cell debug text", grpVisualDebug);
+        m_chkShowTooltip   = new QCheckBox("Show hover tooltip", grpVisualDebug);
+        m_chkShowBodyBounds = new QCheckBox("Show body bounds (debug)", grpVisualDebug);
+        m_chkShowBodyZones  = new QCheckBox("Show body zones", grpVisualDebug);
+        m_chkShowZoneValues = new QCheckBox("Show zone values (debug)", grpVisualDebug);
+        // ===== Dashboard Zone Stats Mode =====
+        m_grpZoneStatsMode = new QGroupBox("Dashboard Zone Stats Source", m_debugContentHost);
+        m_grpZoneStatsMode->setStyleSheet(
+            "QGroupBox {"
+            "  border: 1px solid #2D3742;"
+            "  border-radius: 10px;"
+            "  margin-top: 10px;"
+            "  padding-top: 12px;"
+            "  background-color: #15191E;"
+            "  font-size: 14px;"
+            "  font-weight: 600;"
+            "}"
+            "QGroupBox::title {"
+            "  subcontrol-origin: margin;"
+            "  left: 10px;"
+            "  padding: 0 4px 0 4px;"
+            "  color: #E7ECF3;"
+            "}"
+            );
+
+        QVBoxLayout *zoneModeLayout = new QVBoxLayout(m_grpZoneStatsMode);
+        zoneModeLayout->setContentsMargins(14, 12, 14, 12);
+        zoneModeLayout->setSpacing(8);
+
+        m_radZoneStatsDevice = new QRadioButton("Device stats", m_grpZoneStatsMode);
+        m_radZoneStatsAdaptive = new QRadioButton("Adaptive stats", m_grpZoneStatsMode);
+        m_radZoneStatsCompare = new QRadioButton("Compare device vs adaptive", m_grpZoneStatsMode);
+
+        m_radZoneStatsDevice->setStyleSheet("QRadioButton { color: #D8DEE9; }");
+        m_radZoneStatsAdaptive->setStyleSheet("QRadioButton { color: #D8DEE9; }");
+        m_radZoneStatsCompare->setStyleSheet("QRadioButton { color: #D8DEE9; }");
+
+        // حالت پیش‌فرض
+        m_radZoneStatsDevice->setChecked(false);
+        m_radZoneStatsAdaptive->setChecked(true);
+        m_radZoneStatsCompare->setChecked(false);
+
+        zoneModeLayout->addWidget(m_radZoneStatsDevice);
+        zoneModeLayout->addWidget(m_radZoneStatsAdaptive);
+        zoneModeLayout->addWidget(m_radZoneStatsCompare);
+
+
+        m_chkShowDebugText->setChecked(true);
+        m_chkShowTooltip->setChecked(true);
+
+        m_chkShowDebugText->setStyleSheet("QCheckBox { color: #D8DEE9; }");
+        m_chkShowTooltip->setStyleSheet("QCheckBox { color: #D8DEE9; }");
+
+        m_chkShowBodyBounds->setChecked(false);   // ← اینجا
+        m_chkShowBodyZones->setChecked(false);     // ←
+        m_chkShowZoneValues->setChecked(false);
+
+
+        visualDebugLayout->addWidget(m_chkShowDebugText);
+        visualDebugLayout->addWidget(m_chkShowTooltip);
+        visualDebugLayout->addWidget(m_chkShowBodyBounds);
+        visualDebugLayout->addWidget(m_chkShowBodyZones);
+        visualDebugLayout->addWidget(m_chkShowZoneValues);
+
+
+        debugContentLayout->addWidget(grpVisualDebug);
+        debugContentLayout->addWidget(m_grpZoneStatsMode);
+        // ===== Debug Data Panel =====
+        m_grpDebugData = new QGroupBox("Data Debug", m_debugContentHost);
+        m_grpDebugData->setStyleSheet(
+            "QGroupBox {"
+            "  border: 1px solid #2D3742;"
+            "  border-radius: 10px;"
+            "  margin-top: 10px;"
+            "  padding-top: 12px;"
+            "  background-color: #15191E;"
+            "  font-size: 14px;"
+            "  font-weight: 600;"
+            "}"
+            "QGroupBox::title {"
+            "  subcontrol-origin: margin;"
+            "  left: 10px;"
+            "  padding: 0 4px 0 4px;"
+            "  color: #E7ECF3;"
+            "}"
+            );
+
+        QVBoxLayout *debugDataLayout = new QVBoxLayout(m_grpDebugData);
+        debugDataLayout->setContentsMargins(14, 12, 14, 12);
+        debugDataLayout->setSpacing(8);
+
+        auto makeDebugValueLabel = [this]() -> QLabel* {
+            QLabel *lbl = new QLabel(m_grpDebugData);
+            lbl->setStyleSheet(
+                "QLabel {"
+                "  color: #D8DEE9;"
+                "  background-color: #10151B;"
+                "  border: 1px solid #2D3742;"
+                "  border-radius: 6px;"
+                "  padding: 8px 10px;"
+                "  font-size: 12px;"
+                "}"
+                );
+            lbl->setWordWrap(true);
+            return lbl;
+        };
+
+        m_lblDbgFrame = makeDebugValueLabel();
+        m_lblDbgSync = makeDebugValueLabel();
+        m_lblDbgSource = makeDebugValueLabel();
+        m_lblDbgBody = makeDebugValueLabel();
+        m_lblDbgSacrum = makeDebugValueLabel();
+        m_lblDbgHeelLeft = makeDebugValueLabel();
+        m_lblDbgHeelRight = makeDebugValueLabel();
+
+        m_lblDbgBody->installEventFilter(this);
+        m_lblDbgSacrum->installEventFilter(this);
+        m_lblDbgHeelLeft->installEventFilter(this);
+        m_lblDbgHeelRight->installEventFilter(this);
+
+        m_lblDbgFrame->setText("Frame ID: --");
+        m_lblDbgSync->setText("Sync: --");
+        m_lblDbgSource->setText("Source: --");
+        m_lblDbgBody->setText("Body: --");
+        m_lblDbgSacrum->setText("Sacrum: --");
+        m_lblDbgHeelLeft->setText("Left Heel: --");
+        m_lblDbgHeelRight->setText("Right Heel: --");
+
+        debugDataLayout->addWidget(m_lblDbgFrame);
+        debugDataLayout->addWidget(m_lblDbgSync);
+        debugDataLayout->addWidget(m_lblDbgSource);
+        debugDataLayout->addWidget(m_lblDbgBody);
+        debugDataLayout->addWidget(m_lblDbgSacrum);
+        debugDataLayout->addWidget(m_lblDbgHeelLeft);
+        debugDataLayout->addWidget(m_lblDbgHeelRight);
+
+        debugContentLayout->addWidget(m_grpDebugData);
+        debugContentLayout->addStretch(1);
+
+        debugRootLayout->addWidget(m_debugContentHost, 0, Qt::AlignHCenter);
+        debugRootLayout->addStretch(1);
     }
 
     /* =========================================================
@@ -383,6 +595,12 @@ MainWindow::MainWindow(QWidget *parent)
     m_heatmap->setMinimumSize(620, 620);
     m_heatmap->setStore(&m_store);
     m_heatmap->setBedStore(&m_bedStore);   // Heatmap را به storage جدید BED وصل می‌کنیم
+    m_heatmap->setShowDebugText(true);   // NEW: sync اولیه با تب Debug
+    m_heatmap->setShowTooltip(true);     // NEW: sync اولیه با تب Debug
+    m_heatmap->setShowBodyZones(false);
+    m_heatmap->setShowZoneValues(false);
+    m_useAdaptiveZoneStats = true;   // NEW: حالت اولیه = adaptive
+    m_compareZoneStats = false;
     leftLayout->addWidget(m_heatmap, 1);
 
     // Bottom info row
@@ -623,12 +841,71 @@ MainWindow::MainWindow(QWidget *parent)
                                                 m_spNoSettings->value());
             });
 
+    connect(m_chkShowDebugText, &QCheckBox::toggled,
+            this, [this](bool checked){
+                if (m_heatmap)
+                    m_heatmap->setShowDebugText(checked);
+            });
+
+    connect(m_chkShowTooltip, &QCheckBox::toggled,
+            this, [this](bool checked){
+                if (m_heatmap)
+                    m_heatmap->setShowTooltip(checked);
+            });
+
 
     connect(&m_store, &SensorStore::nodeUpdated,
             this, &MainWindow::updateLiveMonitoring);
 
     connect(&m_bedStore, &BedFrameStore::frameUpdated,
             m_heatmap, &HeatmapWidget::onBedFrameUpdated);   // با هر frame جدید، Heatmap دوباره رسم شود
+
+
+    connect(m_chkShowBodyBounds, &QCheckBox::toggled,
+            this, [this](bool checked){
+                if (m_heatmap)
+                    m_heatmap->setShowBodyBounds(checked);
+            });
+
+    connect(m_chkShowBodyZones, &QCheckBox::toggled,
+            this, [this](bool checked){
+                if (m_heatmap)
+                    m_heatmap->setShowBodyZones(checked);
+            });
+    connect(m_chkShowZoneValues, &QCheckBox::toggled,
+            this, [this](bool checked){
+                if (m_heatmap)
+                    m_heatmap->setShowZoneValues(checked);
+            });
+    connect(m_radZoneStatsDevice, &QRadioButton::toggled,
+            this, [this](bool checked){
+                if (!checked)
+                    return;
+
+                m_useAdaptiveZoneStats = false;
+                m_compareZoneStats = false;
+                renderSummaryToDashboard();
+            });
+
+    connect(m_radZoneStatsAdaptive, &QRadioButton::toggled,
+            this, [this](bool checked){
+                if (!checked)
+                    return;
+
+                m_useAdaptiveZoneStats = true;
+                m_compareZoneStats = false;
+                renderSummaryToDashboard();
+            });
+
+    connect(m_radZoneStatsCompare, &QRadioButton::toggled,
+            this, [this](bool checked){
+                if (!checked)
+                    return;
+
+                m_useAdaptiveZoneStats = false;
+                m_compareZoneStats = true;
+                renderSummaryToDashboard();
+            });
 }
 
 /*========================================================= */
@@ -1072,8 +1349,31 @@ void MainWindow::refreshNodeCardStyles()
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 {
+
+
     if (event->type() == QEvent::MouseButtonPress)
     {
+
+        // ===== Click on Debug Data labels => highlight zone on heatmap =====
+        if (m_heatmap) {
+            if (obj == m_lblDbgSacrum) {
+                m_heatmap->setHighlightedZoneRect(m_dbgSacrumRect);
+                return true;
+            }
+            else if (obj == m_lblDbgHeelLeft) {
+                m_heatmap->setHighlightedZoneRect(m_dbgLeftHeelRect);
+                return true;
+            }
+            else if (obj == m_lblDbgHeelRight) {
+                m_heatmap->setHighlightedZoneRect(m_dbgRightHeelRect);
+                return true;
+            }
+            else if (obj == m_lblDbgBody) {
+                m_heatmap->clearHighlightedZoneRect();
+                return true;
+            }
+        }
+
         if (obj == m_cardHeatmap)
         {
             ui->tabs->setCurrentWidget(ui->Heatmap);
@@ -1508,8 +1808,262 @@ void MainWindow::renderSummaryToDashboard()
                                           "}"
                                           ).arg(color));
     }
+
+    if (m_compareZoneStats) {
+        renderComparedZoneStats();   // NEW: بالاترین اولویت با compare mode
+    }
+    else if (m_useAdaptiveZoneStats) {
+        renderAdaptiveZoneStats();   // NEW: adaptive-only mode
+    }
+
+    renderDebugDataPanel();   // NEW: همزمان پنل داده‌های Debug را هم تازه کن
 }
 
+/*========================================================================================*/
+
+void MainWindow::renderAdaptiveZoneStats()
+{
+    if (!m_bedStore.hasFrame())
+        return;
+
+    const BodyDetector::Result body =
+        BodyDetector::detect(&m_bedStore, 10, 4);
+
+    if (!body.valid)
+        return;
+
+    const BodyZones::Zones zones = BodyZones::estimate(body);
+    if (!zones.valid) {
+        m_lblDbgSacrum->setText("Sacrum: invalid");
+        m_lblDbgHeelLeft->setText("Left Heel: invalid");
+        m_lblDbgHeelRight->setText("Right Heel: invalid");
+        return;
+    }
+    m_dbgSacrumRect = zones.sacrumRect;
+    m_dbgLeftHeelRect = zones.leftHeelRect;
+    m_dbgRightHeelRect = zones.rightHeelRect;
+
+    const BodyZoneAnalyzer::Result stats =
+        BodyZoneAnalyzer::analyze(&m_bedStore, zones);
+
+    if (!stats.valid)
+        return;
+
+    // NEW:
+    // فعلاً این بخش فقط برای debug/reference است
+    // تا adaptive zone stats را با summary packet مقایسه کنیم.
+
+    if (m_lblSacrum) {
+        m_lblSacrum->setText(
+            QString("SACRUM\nAvg: %1  Peak: %2")
+                .arg(stats.sacrum.avg)
+                .arg(stats.sacrum.peak)
+            );
+    }
+
+    if (m_lblHeelLeft) {
+        m_lblHeelLeft->setText(
+            QString("LEFT HEEL\nAvg: %1  Peak: %2")
+                .arg(stats.leftHeel.avg)
+                .arg(stats.leftHeel.peak)
+            );
+    }
+
+    if (m_lblHeelRight) {
+        m_lblHeelRight->setText(
+            QString("RIGHT HEEL\nAvg: %1  Peak: %2")
+                .arg(stats.rightHeel.avg)
+                .arg(stats.rightHeel.peak)
+            );
+    }
+}
+
+/*========================================================================================*/
+
+void MainWindow::renderComparedZoneStats()
+{
+    if (!m_hasSummary || !m_bedStore.hasFrame())
+        return;
+
+    const BodyDetector::Result body =
+        BodyDetector::detect(&m_bedStore, 10, 4);
+
+    if (!body.valid)
+        return;
+
+    const BodyZones::Zones zones = BodyZones::estimate(body);
+    if (!zones.valid)
+        return;
+
+    const BodyZoneAnalyzer::Result stats =
+        BodyZoneAnalyzer::analyze(&m_bedStore, zones);
+
+    if (!stats.valid)
+        return;
+
+    const int devSacrumAvg = int(m_lastSummary.sacrumAvg);
+    const int devSacrumPeak = int(m_lastSummary.sacrumPeak);
+    const int devLeftHeelAvg = int(m_lastSummary.heelLeftAvg);
+    const int devRightHeelAvg = int(m_lastSummary.heelRightAvg);
+
+    const int adpSacrumAvg = stats.sacrum.avg;
+    const int adpSacrumPeak = stats.sacrum.peak;
+    const int adpLeftHeelAvg = stats.leftHeel.avg;
+    const int adpRightHeelAvg = stats.rightHeel.avg;
+
+    const int deltaSacrumAvg = adpSacrumAvg - devSacrumAvg;
+    const int deltaSacrumPeak = adpSacrumPeak - devSacrumPeak;
+    const int deltaLeftHeelAvg = adpLeftHeelAvg - devLeftHeelAvg;
+    const int deltaRightHeelAvg = adpRightHeelAvg - devRightHeelAvg;
+
+    auto deltaText = [](int d) -> QString {
+        return (d >= 0)
+        ? QString("+%1").arg(d)
+        : QString::number(d);
+    };
+
+    if (m_lblSacrum) {
+        m_lblSacrum->setText(
+            QString("SACRUM\n"
+                    "Dev  A:%1 P:%2\n"
+                    "Adp  A:%3 P:%4\n"
+                    "Δ    A:%5 P:%6")
+                .arg(devSacrumAvg)
+                .arg(devSacrumPeak)
+                .arg(adpSacrumAvg)
+                .arg(adpSacrumPeak)
+                .arg(deltaText(deltaSacrumAvg))
+                .arg(deltaText(deltaSacrumPeak))
+            );
+    }
+
+    if (m_lblHeelLeft) {
+        m_lblHeelLeft->setText(
+            QString("LEFT HEEL\n"
+                    "Dev  A:%1\n"
+                    "Adp  A:%2\n"
+                    "Δ    A:%3")
+                .arg(devLeftHeelAvg)
+                .arg(adpLeftHeelAvg)
+                .arg(deltaText(deltaLeftHeelAvg))
+            );
+    }
+
+    if (m_lblHeelRight) {
+        m_lblHeelRight->setText(
+            QString("RIGHT HEEL\n"
+                    "Dev  A:%1\n"
+                    "Adp  A:%2\n"
+                    "Δ    A:%3")
+                .arg(devRightHeelAvg)
+                .arg(adpRightHeelAvg)
+                .arg(deltaText(deltaRightHeelAvg))
+            );
+    }
+}
+/*========================================================================================*/
+
+void MainWindow::renderDebugDataPanel()
+{
+    if (!m_lblDbgFrame || !m_lblDbgSync || !m_lblDbgSource ||
+        !m_lblDbgBody || !m_lblDbgSacrum || !m_lblDbgHeelLeft || !m_lblDbgHeelRight) {
+        return;
+    }
+
+    // ===== Frame / Sync =====
+    QString frameText = "Frame ID: --";
+    if (m_bedStore.hasFrame()) {
+        frameText = QString("Frame ID: %1").arg(m_bedStore.frameId());
+    }
+    m_lblDbgFrame->setText(frameText);
+
+    m_lblDbgSync->setText(
+        QString("Sync: %1")
+            .arg(isCurrentFrameSynchronized() ? "Synced" : "Waiting / Partial")
+        );
+
+    // ===== Source Mode =====
+    QString sourceText = "Source: Device";
+    if (m_compareZoneStats) {
+        sourceText = "Source: Compare (Device vs Adaptive)";
+    } else if (m_useAdaptiveZoneStats) {
+        sourceText = "Source: Adaptive";
+    }
+    m_lblDbgSource->setText(sourceText);
+
+    // ===== Body / Zones =====
+    if (!m_bedStore.hasFrame()) {
+        m_lblDbgBody->setText("Body: --");
+        m_lblDbgSacrum->setText("Sacrum: --");
+        m_lblDbgHeelLeft->setText("Left Heel: --");
+        m_lblDbgHeelRight->setText("Right Heel: --");
+        return;
+    }
+
+    const BodyDetector::Result body =
+        BodyDetector::detect(&m_bedStore, 10, 4);
+
+    if (!body.valid) {
+        m_lblDbgBody->setText("Body: invalid");
+        m_lblDbgSacrum->setText("Sacrum: --");
+        m_lblDbgHeelLeft->setText("Left Heel: --");
+        m_lblDbgHeelRight->setText("Right Heel: --");
+        return;
+    }
+
+    m_lblDbgBody->setText(
+        QString("Body: T:%1  B:%2  L:%3  R:%4  C:%5  A:%6")
+            .arg(body.topRow)
+            .arg(body.bottomRow)
+            .arg(body.leftCol)
+            .arg(body.rightCol)
+            .arg(body.centerCol)
+            .arg(body.activeCellCount)
+        );
+
+    const BodyZones::Zones zones = BodyZones::estimate(body);
+    if (!zones.valid) {
+        m_lblDbgSacrum->setText("Sacrum: invalid");
+        m_lblDbgHeelLeft->setText("Left Heel: invalid");
+        m_lblDbgHeelRight->setText("Right Heel: invalid");
+        return;
+    }
+
+    const BodyZoneAnalyzer::Result stats =
+        BodyZoneAnalyzer::analyze(&m_bedStore, zones);
+
+    if (!stats.valid) {
+        m_lblDbgSacrum->setText("Sacrum: --");
+        m_lblDbgHeelLeft->setText("Left Heel: --");
+        m_lblDbgHeelRight->setText("Right Heel: --");
+        return;
+    }
+
+    m_lblDbgSacrum->setText(
+        QString("Sacrum: Avg:%1  Peak:%2  Valid:%3  [R:%4-%5 C:%6-%7]")
+            .arg(stats.sacrum.avg)
+            .arg(stats.sacrum.peak)
+            .arg(stats.sacrum.validCount)
+            .arg(zones.sacrumRect.top())
+            .arg(zones.sacrumRect.bottom())
+            .arg(zones.sacrumRect.left())
+            .arg(zones.sacrumRect.right())
+        );
+
+    m_lblDbgHeelLeft->setText(
+        QString("Left Heel: Avg:%1  Peak:%2  Valid:%3")
+            .arg(stats.leftHeel.avg)
+            .arg(stats.leftHeel.peak)
+            .arg(stats.leftHeel.validCount)
+        );
+
+    m_lblDbgHeelRight->setText(
+        QString("Right Heel: Avg:%1  Peak:%2  Valid:%3")
+            .arg(stats.rightHeel.avg)
+            .arg(stats.rightHeel.peak)
+            .arg(stats.rightHeel.validCount)
+        );
+}
 /*========================================================================================*/
 void MainWindow::onNodeHealth(const NodeHealthPacket &pkt)
 {
