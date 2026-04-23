@@ -809,7 +809,7 @@ MainWindow::MainWindow(QWidget *parent)
                                     "}");
 
         QVBoxLayout *riskLayout = new QVBoxLayout(grpRiskTrend);
-        riskLayout->setContentsMargins(16, 6, 16, 14);
+        riskLayout->setContentsMargins(12, 2, 12, 8);
         riskLayout->setSpacing(1);
 
         QWidget *riskLegendRow = new QWidget(grpRiskTrend);
@@ -852,6 +852,8 @@ MainWindow::MainWindow(QWidget *parent)
         m_seriesRiskThreshold->setPen(thresholdPen);
 
         QChart *riskChart = new QChart();
+        riskChart->setMargins(QMargins(0, 0, 0, 12));
+        riskChart->layout()->setContentsMargins(0, 0, 0, 12);
         riskChart->addSeries(m_seriesRisk);
         riskChart->addSeries(m_seriesRiskThreshold);
         riskChart->setTitle("");
@@ -918,7 +920,7 @@ MainWindow::MainWindow(QWidget *parent)
                                      "}");
 
         QVBoxLayout *zonesTrendLayout = new QVBoxLayout(grpZonesTrend);
-        zonesTrendLayout->setContentsMargins(16, 6, 16, 14);
+        zonesTrendLayout->setContentsMargins(12, 2, 12, 8);
         zonesTrendLayout->setSpacing(1);
 
         QWidget *zonesLegendRow = new QWidget(grpZonesTrend);
@@ -968,6 +970,8 @@ MainWindow::MainWindow(QWidget *parent)
         m_seriesShoulders->setPen(shouldersPen);
 
         QChart *zonesChart = new QChart();
+        zonesChart->setMargins(QMargins(0, 0, 0, 12));
+        zonesChart->layout()->setContentsMargins(0, 0, 0, 12);
         zonesChart->addSeries(m_seriesSacrum);
         zonesChart->addSeries(m_seriesHeel);
         zonesChart->addSeries(m_seriesShoulders);
@@ -1037,7 +1041,7 @@ MainWindow::MainWindow(QWidget *parent)
                                    "}");
 
         QVBoxLayout *exposureLayout = new QVBoxLayout(grpExposure);
-        exposureLayout->setContentsMargins(16, 6, 16, 14);
+        exposureLayout->setContentsMargins(12, 2, 12, 8);
         exposureLayout->setSpacing(1);
 
         QWidget *exposureLegendRow = new QWidget(grpExposure);
@@ -1084,6 +1088,8 @@ MainWindow::MainWindow(QWidget *parent)
         m_seriesExposure->append(setShoulders);
 
         QChart *exposureChart = new QChart();
+        exposureChart->setMargins(QMargins(0, 0, 0, 12));
+        exposureChart->layout()->setContentsMargins(0, 0, 0, 12);
         exposureChart->addSeries(m_seriesExposure);
         exposureChart->legend()->hide();
         exposureChart->setBackgroundVisible(false);
@@ -3208,6 +3214,9 @@ void MainWindow::updateMiniRiskTrendChart()
     if (!axesX.isEmpty()) {
         if (auto axisX = qobject_cast<QValueAxis*>(axesX.first())) {
             axisX->setRange(0, qMax(20, x));
+            axisX->setLabelsFont(QFont("Segoe UI", 8));
+            axisX->setTitleFont(QFont("Segoe UI", 8));
+            axisX->setTitleText("Time");
         }
     }
 
