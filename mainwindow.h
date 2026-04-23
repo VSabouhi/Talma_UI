@@ -3,9 +3,6 @@
 /*========================================================================================*/
 #include <QMainWindow>
 #include <QSerialPort>
-#include "serialreceiver.h"
-#include "sensorstore.h"
-#include "heatmapwidget.h"
 #include <QGridLayout>
 #include <QVector>
 #include <QFrame>
@@ -15,16 +12,31 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QCheckBox>
-#include "summarydata.h"  // برای دریافت داده Summary از SerialReceiver
-#include "bedframestore.h"   // برای نگهداری داده‌های BED_SNAPSHOT و BED_STATUS
-#include "bodydetector.h"
-#include "bodyzones.h"
-#include "bodyzoneanalyzer.h"
-#include <QTimer>   // برای محدود کردن نرخ refresh داشبورد
+#include <QTimer>
 #include <QRadioButton>
 #include <QGroupBox>
 #include <QVBoxLayout>
 #include <QRect>
+#include <QEvent>
+
+#include <QtCharts>
+#include <QChartView>
+#include <QLineSeries>
+#include <QValueAxis>
+#include <QChart>
+
+#include "serialreceiver.h"
+#include "sensorstore.h"
+#include "heatmapwidget.h"
+#include "summarydata.h"        // برای دریافت داده Summary از SerialReceiver
+#include "bedframestore.h"      // برای نگهداری داده‌های BED_SNAPSHOT و BED_STATUS
+#include "trendhistorystore.h"
+#include "bodydetector.h"
+#include "bodyzones.h"
+#include "bodyzoneanalyzer.h"
+
+#include <QGraphicsOpacityEffect>
+#include <QPropertyAnimation>
 /*========================================================================================*/
 
 QT_BEGIN_NAMESPACE
@@ -43,10 +55,15 @@ public:
 
 private:
     Ui::MainWindow *ui;
+
+    /* ====================== Core Data Pipeline ====================== */
     QSerialPort m_port;
     SerialReceiver m_rx;
     SensorStore m_store;
-    BedFrameStore m_bedStore;   // storage جدید برای packetهای 0x20 و 0x22
+    BedFrameStore m_bedStore;           // storage برای packetهای 0x20 و 0x22
+    TrendHistoryStore m_trendHistory;   // history برای trend/analytics
+
+    /* ====================== Main Heatmap / Data UI ====================== */
     HeatmapWidget *m_heatmap = nullptr;
     QGridLayout *m_nodeSummaryLayout = nullptr;
     QVector<QFrame*> m_nodeCards;
@@ -54,7 +71,7 @@ private:
     QVector<QLabel*> m_nodeSubs;
     int m_selectedNode = 0;
 
-
+    /* ====================== Home Page ====================== */
     QWidget *m_homeContentHost = nullptr;
     QLabel *m_lblHomeTitle = nullptr;
 
@@ -62,35 +79,8 @@ private:
     QFrame *m_cardData = nullptr;
     QFrame *m_cardSettings = nullptr;
 
+    /* ====================== Settings Page ====================== */
     QWidget *m_settingsContentHost = nullptr;
-
-    // ===== Debug Page =====
-    QWidget *m_tabDebug = nullptr;                 // NEW: تب مستقل Debug
-    QWidget *m_debugContentHost = nullptr;         // NEW: کانتینر اصلی محتوای Debug
-    QCheckBox *m_chkShowDebugText = nullptr;       // NEW: نمایش text دیباگ داخل سلول‌ها
-    QCheckBox *m_chkShowTooltip = nullptr;         // NEW: نمایش tooltip زیر موس
-    QCheckBox *m_chkShowBodyBounds = nullptr;
-    QCheckBox *m_chkShowBodyZones = nullptr;
-    QCheckBox *m_chkShowZoneValues = nullptr;   // NEW: نمایش مقادیر zoneها روی heatmap
-    // ===== Dashboard Zone Stats Mode =====
-    QGroupBox *m_grpZoneStatsMode = nullptr;         // NEW: گروه mode انتخاب منبع zone stats
-    QRadioButton *m_radZoneStatsDevice = nullptr;    // NEW: فقط summary دستگاه
-    QRadioButton *m_radZoneStatsAdaptive = nullptr;  // NEW: فقط adaptive analyzer
-    QRadioButton *m_radZoneStatsCompare = nullptr;   // NEW: مقایسه هر دو
-    QLabel *m_lblDebugTitle = nullptr;             // NEW: عنوان صفحه Debug
-    // ===== Debug Data Panel =====
-    QGroupBox *m_grpDebugData = nullptr;          // NEW: پنل داده‌های عددی debug
-    QLabel *m_lblDbgFrame = nullptr;              // NEW: frame id
-    QLabel *m_lblDbgSync = nullptr;               // NEW: sync status
-    QLabel *m_lblDbgSource = nullptr;             // NEW: source mode (Device/Adaptive/Compare)
-    QLabel *m_lblDbgBody = nullptr;               // NEW: body bounds
-    QLabel *m_lblDbgSacrum = nullptr;             // NEW: sacrum stats
-    QLabel *m_lblDbgHeelLeft = nullptr;           // NEW: left heel stats
-    QLabel *m_lblDbgHeelRight = nullptr;          // NEW: right heel stats
-    QRect m_dbgSacrumRect;      // NEW: rect فعلی sacrum برای hover highlight
-    QRect m_dbgLeftHeelRect;    // NEW: rect فعلی left heel برای hover highlight
-    QRect m_dbgRightHeelRect;   // NEW: rect فعلی right heel برای hover highlight
-
     QComboBox *m_cmbPortSettings = nullptr;
     QPushButton *m_btnRefreshSettings = nullptr;
     QPushButton *m_btnConnectSettings = nullptr;
@@ -99,25 +89,83 @@ private:
     QSpinBox *m_spHighSettings = nullptr;
     QSpinBox *m_spNoSettings = nullptr;
 
-    // ===== Live Monitoring UI =====
+    /* ====================== Debug Page ====================== */
+    QWidget *m_tabDebug = nullptr;
+    QWidget *m_debugContentHost = nullptr;
+    QLabel *m_lblDebugTitle = nullptr;
+
+    QCheckBox *m_chkShowDebugText = nullptr;
+    QCheckBox *m_chkShowTooltip = nullptr;
+    QCheckBox *m_chkShowBodyBounds = nullptr;
+    QCheckBox *m_chkShowBodyZones = nullptr;
+    QCheckBox *m_chkShowZoneValues = nullptr;
+
+    // ===== Analytics Page =====
+    QWidget *m_tabAnalytics = nullptr;          // تب مستقل Analytics
+    QWidget *m_analyticsContentHost = nullptr;  // کانتینر اصلی محتوای Analytics
+    QLabel *m_lblAnalyticsTitle = nullptr;      // عنوان صفحه Analytics
+
+    // ===== Analytics Clinical Summary =====
+    QWidget *m_analyticsSummaryRow = nullptr;          // ردیف summary بالای نمودارها
+    QLabel *m_lblClinicalLastMove = nullptr;          // زمان آخرین حرکت
+    QLabel *m_lblClinicalTopZone = nullptr;           // پرریسک‌ترین ناحیه
+    QLabel *m_lblClinicalMaxExposure = nullptr;       // بیشترین زمان exposure
+    QLabel *m_lblClinicalAction = nullptr;            // اقدام پیشنهادی
+
+    // ===== Dashboard Zone Stats Mode =====
+    QGroupBox *m_grpZoneStatsMode = nullptr;
+    QRadioButton *m_radZoneStatsDevice = nullptr;
+    QRadioButton *m_radZoneStatsAdaptive = nullptr;
+    QRadioButton *m_radZoneStatsCompare = nullptr;
+
+    // ===== Debug Data Panel =====
+    QGroupBox *m_grpDebugData = nullptr;
+    QLabel *m_lblDbgFrame = nullptr;
+    QLabel *m_lblDbgSync = nullptr;
+    QLabel *m_lblDbgSource = nullptr;
+    QLabel *m_lblDbgBody = nullptr;
+    QLabel *m_lblDbgSacrum = nullptr;
+    QLabel *m_lblDbgHeelLeft = nullptr;
+    QLabel *m_lblDbgHeelRight = nullptr;
+
+    QRect m_dbgSacrumRect;
+    QRect m_dbgLeftHeelRect;
+    QRect m_dbgRightHeelRect;
+
+    /* ====================== Live Monitoring / Dashboard UI ====================== */
     QLabel *m_lblRiskLive = nullptr;
     QLabel *m_lblMovementLive = nullptr;
-    QLabel *m_lblFrameSync = nullptr;   // نمایش وضعیت sync بین packetهای یک frame
+    QLabel *m_lblFrameSync = nullptr;
 
-    SummaryData m_lastSummary;         // آخرین Summary دریافت‌شده از MCU
-    bool m_hasSummary = false;         // آیا تاکنون Summary معتبر گرفته‌ایم؟
-    bool m_useAdaptiveZoneStats = true;   // NEW: اگر true باشد، zone cards از analyzer تغذیه می‌شوند
-    bool m_compareZoneStats = false;   // NEW: اگر true باشد، zone cards مقایسه دو منبع را نشان می‌دهند
-    QTimer *m_summaryUiTimer = nullptr; // تایمر برای stable کردن refresh داشبورد
-    qint64 m_lastSummaryRxMs = -1;   // زمان آخرین دریافت Summary برای جلوگیری از خالی شدن لحظه‌ای داشبورد
-    QLabel *m_lblAlertsText = nullptr;
-
+    QLabel *m_lblAlerts = nullptr;
     QLabel *m_lblSacrum = nullptr;
-    QLabel *m_lblHeelLeft = nullptr;   // نمایش فشار پاشنه چپ
-    QLabel *m_lblHeelRight = nullptr;  // نمایش فشار پاشنه راست
-
+    QLabel *m_lblHeelLeft = nullptr;
+    QLabel *m_lblHeelRight = nullptr;
     QLabel *m_lblRecommendation = nullptr;
 
+    /* ====================== Alert Blink State ====================== */
+    QTimer *m_alertBlinkTimer = nullptr;   // تایمر blink برای alertهای critical
+    bool m_alertBlinkOn = true;            // وضعیت فعلی روشن/خاموش blink
+    bool m_alertBlinkActive = false;       // آیا blink باید فعال باشد یا نه
+    QString m_currentAlertStyle;           // استایل پایه‌ی alert در حالت visible
+
+    /* ====================== Alert Pulse State ====================== */
+    QGraphicsOpacityEffect *m_alertOpacityEffect = nullptr;   // افکت opacity برای pulse
+    QPropertyAnimation *m_alertPulseAnim = nullptr;           // انیمیشن نرم کم/زیاد شدن opacity
+    /* ====================== Mini Trend Chart ====================== */
+    QFrame *m_cardRiskTrendMini = nullptr;
+    QChartView *m_riskTrendChartView = nullptr;
+    QLineSeries *m_riskTrendSeries = nullptr;
+
+    /* ====================== Summary / Dashboard State ====================== */
+    SummaryData m_lastSummary;
+    bool m_hasValidSummary = false;
+    bool m_useAdaptiveZoneStats = true;   // اگر true باشد، zone cards از analyzer تغذیه می‌شوند
+    bool m_compareZoneStats = false;      // اگر true باشد، zone cards مقایسه دو منبع را نشان می‌دهند
+    QTimer *m_summaryUiTimer = nullptr;
+    qint64 m_lastSummaryRxMs = -1;
+
+    /* ====================== Frame Sync State ====================== */
     struct FrameSyncState
     {
         quint16 snapshotFrameId = 0;
@@ -129,32 +177,47 @@ private:
         bool hasStatus = false;
         bool hasNodeHealth = false;
         bool hasSummary = false;
-
     };
 
-    FrameSyncState m_frameSync;   // نگهداری وضعیت sync بین 0x20 / 0x22 / 0x30 / 0x40
+    FrameSyncState m_frameSync;
 
+    /* ====================== Internal Helpers ====================== */
     void refreshPorts();
     void setConnectedUi(bool connected);
-    void renderSummaryToDashboard();   // آخرین Summary cache شده را با نرخ کنترل‌شده روی UI نمایش می‌دهد
-    void renderAdaptiveZoneStats();   // NEW: محاسبه و نمایش zone stats از خود heatmap
-    void renderComparedZoneStats();   // NEW: نمایش Device / Adaptive / Delta روی zone cards
-    void renderDebugDataPanel();   // NEW: به‌روزرسانی پنل داده‌های مهندسی در تب Debug
-    bool isCurrentFrameSynchronized() const;   // آیا همه packetهای لازم روی یک frameId هستند؟
+    void renderSummaryToDashboard(const SummaryData &summary);
+    void renderAdaptiveZoneStats();
+    void renderComparedZoneStats();
+    void renderDebugDataPanel();
+    void updateMiniRiskTrendChart();
+    bool isCurrentFrameSynchronized() const;
     void updateTableNode(int nodeId);
     void markAllNodesState(NodeState state);
     void updateNodeSummary(int nodeId);
     void refreshNodeCardStyles();
 
+    // ===== Analytics Charts =====
+    QChartView *m_chartRiskView = nullptr;
+    QLineSeries *m_seriesRisk = nullptr;
+    QLineSeries *m_seriesRiskThreshold = nullptr;   // خط threshold برای Risk Trend
+
+    QChartView *m_chartZonesView = nullptr;
+    QLineSeries *m_seriesSacrum = nullptr;
+    QLineSeries *m_seriesHeel = nullptr;
+    QLineSeries *m_seriesShoulders = nullptr;
+
+    QChartView *m_chartExposureView = nullptr;
+    QBarSeries *m_seriesExposure = nullptr;
+
+
 private slots:
     void onConnectClicked();
     void onSerialError(QSerialPort::SerialPortError e);
     void onPacket(const NodePacket &pkt);
-    void onBedSnapshot(const BedSnapshotPacket &pkt);  // دریافت snapshot تخت از packet 0x20
-    void onBedStatus(const BedStatusPacket &pkt);      // دریافت status تخت از packet 0x22
-    void onNodeHealth(const NodeHealthPacket &pkt);  // دریافت وضعیت 16 نود از packet 0x30
+    void onBedSnapshot(const BedSnapshotPacket &pkt);
+    void onBedStatus(const BedStatusPacket &pkt);
+    void onNodeHealth(const NodeHealthPacket &pkt);
     void updateLiveMonitoring();
-    void onSummaryReceived(const SummaryData &summary);  // دریافت داده 0x40 از MCU
+    void onSummaryReceived(const SummaryData &summary);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;

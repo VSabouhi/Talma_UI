@@ -144,7 +144,7 @@ void SerialReceiver::processBuffer()
         }
         // ---------------- SUMMARY (0x40) ----------------
         else if (type == TYPE_SUMMARY) {
-            static constexpr int SUMMARY_LEN = 24;
+            static constexpr int SUMMARY_LEN = 37;
 
             if (m_buf.size() < SUMMARY_LEN)
                 return;
@@ -311,7 +311,7 @@ bool SerialReceiver::tryParseNodeHealth(NodeHealthPacket &out)
 
 bool SerialReceiver::tryParseSummary(SummaryData &out)
 {
-    static constexpr int SUMMARY_LEN = 24;
+    static constexpr int SUMMARY_LEN = 37;
 
     // اگر هنوز کل packet نرسیده، parse نکن
     if (m_buf.size() < SUMMARY_LEN)
@@ -329,26 +329,48 @@ bool SerialReceiver::tryParseSummary(SummaryData &out)
     // فیلدهای packet طبق protocol specification
     out.frameId = quint16((quint8)m_buf[4]) | (quint16((quint8)m_buf[5]) << 8);
 
-    out.riskScore = (quint8)m_buf[6];
-    out.riskLevel = (quint8)m_buf[7];
+    out.frameId = quint16((quint8)m_buf[4]) | (quint16((quint8)m_buf[5]) << 8);
 
-    out.movementDetected = (quint8)m_buf[8];
-    out.timeSinceLastMovementS = quint16((quint8)m_buf[9])
-                                 | (quint16((quint8)m_buf[10]) << 8);
+    out.uptimeS = quint16((quint8)m_buf[6]) | (quint16((quint8)m_buf[7]) << 8);
 
-    out.alertActive = (quint8)m_buf[11];
-    out.alertType = (quint8)m_buf[12];
-    out.alertSeverity = (quint8)m_buf[13];
-    out.alertDurationS = quint16((quint8)m_buf[14])
-                         | (quint16((quint8)m_buf[15]) << 8);
+    out.riskScore = (quint8)m_buf[8];
+    out.riskLevel = (quint8)m_buf[9];
 
-    out.recommendationCode = (quint8)m_buf[16];
-    out.recommendationPriority = (quint8)m_buf[17];
+    out.movementDetected = (quint8)m_buf[10];
+    out.timeSinceLastMovementS = quint16((quint8)m_buf[11])
+                                 | (quint16((quint8)m_buf[12]) << 8);
 
-    out.sacrumAvg = (quint8)m_buf[18];
-    out.sacrumPeak = (quint8)m_buf[19];
-    out.heelLeftAvg = (quint8)m_buf[20];
-    out.heelRightAvg = (quint8)m_buf[21];
+    out.alertActive = (quint8)m_buf[13];
+    out.alertType = (quint8)m_buf[14];
+    out.alertSeverity = (quint8)m_buf[15];
+    out.alertDurationS = quint16((quint8)m_buf[16])
+                         | (quint16((quint8)m_buf[17]) << 8);
+
+    out.recommendationCode = (quint8)m_buf[18];
+    out.recommendationPriority = (quint8)m_buf[19];
+
+    out.sacrumAvg = (quint8)m_buf[20];
+    out.sacrumPeak = (quint8)m_buf[21];
+
+    out.heelLeftAvg = (quint8)m_buf[22];
+    out.heelRightAvg = (quint8)m_buf[23];
+
+    out.shouldersAvg = (quint8)m_buf[24];
+    out.shouldersPeak = (quint8)m_buf[25];
+
+    out.pressureExposureThreshold = (quint8)m_buf[26];
+
+    out.sacrumExposureS = quint16((quint8)m_buf[27])
+                          | (quint16((quint8)m_buf[28]) << 8);
+
+    out.heelsExposureS = quint16((quint8)m_buf[29])
+                         | (quint16((quint8)m_buf[30]) << 8);
+
+    out.shouldersExposureS = quint16((quint8)m_buf[31])
+                             | (quint16((quint8)m_buf[32]) << 8);
+
+    out.zonesValidMask = (quint8)m_buf[33];
+    out.summaryFlags = (quint8)m_buf[34];
 
     // فعلاً CRC روی برد placeholder است، پس اینجا validate واقعی نمی‌کنیم
     return true;

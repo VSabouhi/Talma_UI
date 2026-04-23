@@ -15,6 +15,7 @@ zone metrics*/
 struct SummaryData
 {
     quint16 frameId = 0;
+    quint16 uptimeS = 0;                 // NEW: زمان از روشن شدن سیستم
 
     quint8 riskScore = 0;
     quint8 riskLevel = 0;
@@ -34,6 +35,16 @@ struct SummaryData
     quint8 sacrumPeak = 0;
     quint8 heelLeftAvg = 0;
     quint8 heelRightAvg = 0;
+    quint8 shouldersAvg = 0;
+    quint8 shouldersPeak = 0;
+
+    quint8 pressureExposureThreshold = 0;
+
+    quint16 sacrumExposureS = 0;
+    quint16 heelsExposureS = 0;
+    quint16 shouldersExposureS = 0;
+    quint8 zonesValidMask = 0;           // NEW
+    quint8 summaryFlags = 0;             // NEW
 };
 
 Q_DECLARE_METATYPE(SummaryData);
