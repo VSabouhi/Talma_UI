@@ -38,10 +38,183 @@ void SerialReceiver::detach()
 }
 /*========================================================================================*/
 
+/*void SerialReceiver::onReadyRead()
+{
+    if (!m_port)
+        return;
+
+    QByteArray rx = m_port->readAll();
+
+    if (rx.isEmpty())
+        return;
+
+    // ======================================================
+    // TEMP TEST:
+    // Raw UART monitor for fake INTERVENTION_PLAN packet.
+    // ======================================================
+    static QByteArray planRxMonitorBuffer;
+    planRxMonitorBuffer.append(rx);
+
+    if (planRxMonitorBuffer.size() > 256)
+        planRxMonitorBuffer.remove(0, planRxMonitorBuffer.size() - 256);
+
+    const QByteArray expectedPlan =
+        QByteArray::fromHex("AA555100010002030C800301021234");
+
+    if (planRxMonitorBuffer.contains(expectedPlan)) {
+        qDebug() << "[UART MONITOR] TEST INTERVENTION_PLAN RECEIVED OK";
+
+        InterventionPlan plan;
+        plan.planId = 1;
+        plan.boardId = 2;
+        plan.targetZone = 3;
+        plan.motorCount = 12;
+        plan.riskScore = 128;
+        plan.riskLevel = 3;
+        plan.recommendationCode = 1;
+        plan.reasonCode = 2;
+
+        emit interventionPlanReceived(plan);
+
+        planRxMonitorBuffer.clear();
+    }
+
+    // ======================================================
+    // TEMP TEST:
+    // Raw UART monitor for INTERVENTION_RESULT packet.
+    //
+    // Checks whether Main sends TYPE = 0x54 after approve.
+    // ======================================================
+    static QByteArray resultRxMonitorBuffer;
+    resultRxMonitorBuffer.append(rx);
+
+    if (resultRxMonitorBuffer.size() > 256)
+        resultRxMonitorBuffer.remove(0, resultRxMonitorBuffer.size() - 256);
+
+    if (resultRxMonitorBuffer.contains(QByteArray::fromHex("AA5554"))) {
+        qDebug() << "[UART MONITOR] INTERVENTION_RESULT RAW DETECTED buffer ="
+                 << resultRxMonitorBuffer.toHex(' ');
+        resultRxMonitorBuffer.clear();
+    }
+
+    m_buf.append(rx);
+    processBuffer();
+}*/
+
+
 void SerialReceiver::onReadyRead()
 {
-    if (!m_port) return;
-    m_buf.append(m_port->readAll());
+    if (!m_port)
+        return;
+
+    QByteArray rx = m_port->readAll();
+
+    if (rx.isEmpty())
+        return;
+
+    // ======================================================
+    // TEMP FAST-PATH:
+    // Detect exact fake INTERVENTION_PLAN packet directly
+    // from raw UART stream.
+    //
+    // This avoids delays caused by large 0x20 / 0x22 packets.
+    // ======================================================
+    static QByteArray planRxMonitorBuffer;
+
+    planRxMonitorBuffer.append(rx);
+
+    if (planRxMonitorBuffer.size() > 256)
+        planRxMonitorBuffer.remove(0,
+                                   planRxMonitorBuffer.size() - 256);
+
+    const QByteArray expectedPlan =
+        QByteArray::fromHex("AA555100010002030C800301021234");
+
+    if (planRxMonitorBuffer.contains(expectedPlan)) {
+
+        qDebug() << "[UART FAST-PATH] TEST INTERVENTION_PLAN detected";
+
+        InterventionPlan plan;
+
+        plan.planId = 1;
+        plan.boardId = 2;
+        plan.targetZone = 3;
+        plan.motorCount = 12;
+        plan.riskScore = 128;
+        plan.riskLevel = 3;
+        plan.recommendationCode = 1;
+        plan.reasonCode = 2;
+
+        emit interventionPlanReceived(plan);
+
+        planRxMonitorBuffer.clear();
+    }
+
+    // ======================================================
+    // TEMP FAST-PATH:
+    // Detect and decode INTERVENTION_RESULT packets directly
+    // from raw UART stream.
+    //
+    // Packet:
+    // AA 55 54 ...
+    //
+    // This avoids delays when 0x54 arrives behind large
+    // BED packets.
+    // ======================================================
+    static QByteArray resultRxMonitorBuffer;
+
+    resultRxMonitorBuffer.append(rx);
+
+    if (resultRxMonitorBuffer.size() > 256)
+        resultRxMonitorBuffer.remove(0,
+                                     resultRxMonitorBuffer.size() - 256);
+
+    int resultIdx =
+        resultRxMonitorBuffer.indexOf(
+            QByteArray::fromHex("AA5554"));
+
+    // Full RESULT packet length = 13 bytes
+    if (resultIdx >= 0 &&
+        resultRxMonitorBuffer.size() >= resultIdx + 13)
+    {
+        QByteArray pkt =
+            resultRxMonitorBuffer.mid(resultIdx, 13);
+
+        // Footer check
+        if ((quint8)pkt[11] == 0x12 &&
+            (quint8)pkt[12] == 0x34)
+        {
+            InterventionResult result;
+
+            result.planId =
+                quint32((quint8)pkt[4]) |
+                (quint32((quint8)pkt[5]) << 8) |
+                (quint32((quint8)pkt[6]) << 16) |
+                (quint32((quint8)pkt[7]) << 24);
+
+            result.state = (quint8)pkt[8];
+            result.boardId = (quint8)pkt[9];
+            result.motorCount = (quint8)pkt[10];
+
+            qDebug() << "[UART FAST-PATH] INTERVENTION_RESULT"
+                     << "plan_id =" << result.planId
+                     << "state =" << result.state
+                     << "board =" << result.boardId
+                     << "motors =" << result.motorCount;
+
+            emit interventionResultReceived(result);
+
+            // Remove parsed packet from temp monitor buffer
+            resultRxMonitorBuffer.remove(0,
+                                         resultIdx + 13);
+        }
+    }
+
+    // ======================================================
+    // Normal parser path
+    // ======================================================
+    m_buf.append(rx);
+
     processBuffer();
 }
 /*========================================================================================*/
@@ -74,6 +247,31 @@ void SerialReceiver::processBuffer()
 
 
         const quint8 type = quint8(m_buf[2]);
+
+        // ======================================================
+        // Safety guard against parser deadlock.
+        //
+        // If UART stream becomes misaligned and parser waits forever
+        // for a large packet (0x20 / 0x22), buffer may grow endlessly.
+        //
+        // Instead of freezing UI updates, slowly resync by dropping
+        // one byte at a time only when buffer becomes abnormally large.
+        // ======================================================
+        if (m_buf.size() > 8192) {
+            qWarning() << "[SERIAL] buffer overflow, resync";
+
+            emit parseError("Serial buffer overflow/resync");
+
+            m_buf.remove(0, 1);
+            continue;
+        }
+        // ======================================================
+        // TEMP DEBUG:
+        // Verify parser reaches TYPE 0x51 branch.
+        // ======================================================
+        if (type == TYPE_INTERVENTION_PLAN) {
+           // qDebug() << "[PARSER] TYPE_INTERVENTION_PLAN detected";
+        }
 
         // ---------------- NODE32 ----------------
         if (type == TYPE_NODE32) {
@@ -162,6 +360,62 @@ void SerialReceiver::processBuffer()
                      << "risk =" << summary.riskScore
                      << "movement =" << summary.timeSinceLastMovementS;*/
             emit summaryReceived(summary);
+        }
+        // ---------------- INTERVENTION PLAN (0x51) ----------------
+        else if (type == TYPE_INTERVENTION_PLAN) {
+            // Packet:
+            // AA 55 51 SEQ
+            // planL planH
+            // board_id
+            // target_zone
+            // motor_count
+            // risk_score
+            // risk_level
+            // recommendation_code
+            // reason_code
+            // 12 34
+            //
+            // Total length = 15 bytes
+
+            //qDebug() << "[PARSER] Entered INTERVENTION_PLAN branch";
+
+
+            static constexpr int INTERVENTION_PLAN_LEN = 15;
+
+            // هنوز کل packet نرسیده؛ صبر کن تا بقیه byteها برسند.
+            if (m_buf.size() < INTERVENTION_PLAN_LEN)
+                return;
+
+            InterventionPlan plan;
+
+            if (!tryParseInterventionPlan(plan)) {
+                qWarning() << "[INTERVENTION_PLAN] invalid packet:"
+                           << m_buf.left(INTERVENTION_PLAN_LEN).toHex(' ');
+
+                m_buf.remove(0, 1);
+                emit parseError("Invalid INTERVENTION_PLAN packet, resyncing...");
+                continue;
+            }
+
+            emit interventionPlanReceived(plan);
+        }
+
+        // ---------------- INTERVENTION RESULT (0x54) ----------------
+        else if (type == TYPE_INTERVENTION_RESULT) {
+            // Packet:
+            // AA 55 54 SEQ plan0 plan1 plan2 plan3 state board_id motor_count 12 34
+            //
+            // Main Board reports lifecycle state:
+            // EXECUTING / COMPLETED / FAILED / REJECTED
+            InterventionResult result;
+
+            if (!tryParseInterventionResult(result)) {
+                m_buf.remove(0, 1);
+                emit parseError("Invalid INTERVENTION_RESULT packet, resyncing...");
+                continue;
+            }
+
+            emit interventionResultReceived(result);
         }
         // ---------------- UNKNOWN ----------------
         else {
@@ -376,9 +630,389 @@ bool SerialReceiver::tryParseSummary(SummaryData &out)
     return true;
 }
 /*========================================================================================*/
+// ======================================================
+// UI -> Main Board
+// Send intervention approve command
+//
+// TYPE = 0x52
+//
+// Packet format:
+// Byte0 = 0xAA
+// Byte1 = 0x55
+// Byte2 = 0x52
+// Byte3 = SEQ
+// Byte4 = plan_id low byte
+// Byte5 = plan_id high byte
+// Byte6 = 0x12
+// Byte7 = 0x34
+//
+// Meaning:
+// Nurse/operator approved the currently pending plan.
+// ======================================================
+void SerialReceiver::sendInterventionApprove(quint16 planId)
+{
+    QByteArray packet;
 
+    // Header
+    packet.append(char(0xAA));
+    packet.append(char(0x55));
+
+    // Packet type: APPROVE_INTERVENTION
+    packet.append(char(0x52));
+
+    // UI transmit sequence number
+    packet.append(char(m_uiTxSeq++));
+
+    // plan_id, little-endian
+    packet.append(char(planId & 0xFF));
+    packet.append(char((planId >> 8) & 0xFF));
+
+    // Dummy/static CRC used by current Main Board firmware
+    packet.append(char(0x12));
+    packet.append(char(0x34));
+
+    // Send only when serial port is valid and open
+    if (m_port && m_port->isOpen()) {
+        m_port->write(packet);
+
+        qDebug() << "[UI->MAIN] APPROVE sent"
+                 << "plan_id =" << planId
+                 << "raw =" << packet.toHex(' ');
+    } else {
+        qWarning() << "[UI->MAIN] APPROVE not sent: serial port is closed";
+    }
+}
+
+
+// ======================================================
+// UI -> Main Board
+// Send intervention reject command
+//
+// TYPE = 0x53
+//
+// Packet format:
+// Byte0 = 0xAA
+// Byte1 = 0x55
+// Byte2 = 0x53
+// Byte3 = SEQ
+// Byte4 = plan_id low byte
+// Byte5 = plan_id high byte
+// Byte6 = 0x12
+// Byte7 = 0x34
+//
+// Meaning:
+// Nurse/operator rejected the currently pending plan.
+// ======================================================
+void SerialReceiver::sendInterventionReject(quint16 planId)
+{
+    QByteArray packet;
+
+    // Header
+    packet.append(char(0xAA));
+    packet.append(char(0x55));
+
+    // Packet type: REJECT_INTERVENTION
+    packet.append(char(0x53));
+
+    // UI transmit sequence number
+    packet.append(char(m_uiTxSeq++));
+
+    // plan_id, little-endian
+    packet.append(char(planId & 0xFF));
+    packet.append(char((planId >> 8) & 0xFF));
+
+    // Dummy/static CRC used by current Main Board firmware
+    packet.append(char(0x12));
+    packet.append(char(0x34));
+
+    // Send only when serial port is valid and open
+    if (m_port && m_port->isOpen()) {
+        m_port->write(packet);
+
+        qDebug() << "[UI->MAIN] REJECT sent"
+                 << "plan_id =" << planId
+                 << "raw =" << packet.toHex(' ');
+    } else {
+        qWarning() << "[UI->MAIN] REJECT not sent: serial port is closed";
+    }
+}
+
+
+// ======================================================
+// UI -> Main Board
+// Send debug/simulation command.
+//
+// TYPE = 0x5A
+//
+// Packet format:
+// Byte0 = 0xAA
+// Byte1 = 0x55
+// Byte2 = 0x5A
+// Byte3 = SEQ
+// Byte4 = command_id
+// Byte5 = param low byte
+// Byte6 = param high byte
+// Byte7 = 0x12
+// Byte8 = 0x34
+//
+// command_id examples:
+// 1 = ask Main Board to send fake INTERVENTION_PLAN
+//
+// This is used only for development/debug/service tools.
+// ======================================================
+void SerialReceiver::sendDebugCommand(quint8 commandId, quint16 param)
+{
+    QByteArray packet;
+
+    // Header
+    packet.append(char(0xAA));
+    packet.append(char(0x55));
+
+    // Packet type: DEBUG_COMMAND
+    packet.append(char(TYPE_DEBUG_COMMAND));
+
+    // UI TX sequence counter
+    packet.append(char(m_uiTxSeq++));
+
+    // Debug command ID
+    packet.append(char(commandId));
+
+    // Debug parameter, 8-bit only.
+    // Current use: test plan_id / simulation mode selector.
+    packet.append(char(param & 0xFF));
+
+    // Dummy/static CRC
+    packet.append(char(0x12));
+    packet.append(char(0x34));
+
+    if (m_port && m_port->isOpen()) {
+        m_port->write(packet);
+
+        qDebug() << "[UI->MAIN] DEBUG_COMMAND sent"
+                 << "cmd =" << commandId
+                 << "param =" << param
+                 << "raw =" << packet.toHex(' ');
+    } else {
+        qWarning() << "[UI->MAIN] DEBUG_COMMAND not sent: serial port is closed";
+    }
+}
+/*========================================================================================*/
+// ======================================================
+// Main -> UI
+// Decode intervention result packet
+//
+// TYPE = 0x54
+//
+// Implemented packet format:
+// AA 55 54 SEQ
+// plan0 plan1 plan2 plan3
+// state
+// board_id
+// motor_count
+// 12 34
+//
+// Payload:
+// plan_id     : uint32 little-endian
+// state       : uint8
+// board_id    : uint8
+// motor_count : uint8
+//
+// State mapping:
+// 0 = IDLE
+// 1 = EXECUTING
+// 2 = COMPLETED
+// 3 = FAILED
+// 4 = REJECTED
+// ======================================================
+// ======================================================
+// Main -> UI
+// Try parse intervention result packet
+//
+// TYPE = 0x54
+//
+// Packet format:
+// AA 55 54 SEQ
+// plan0 plan1 plan2 plan3
+// state
+// board_id
+// motor_count
+// 12 34
+//
+// Total length = 13 bytes
+//
+// Returns:
+// true  = packet parsed and removed from buffer
+// false = packet invalid or incomplete
+// ======================================================
+bool SerialReceiver::tryParseInterventionResult(InterventionResult &out)
+{
+    static constexpr int INTERVENTION_RESULT_LEN = 13;
+
+    // Wait until full packet is available
+    if (m_buf.size() < INTERVENTION_RESULT_LEN)
+        return false;
+
+    // Validate header
+    if ((quint8)m_buf[0] != SOF0 || (quint8)m_buf[1] != SOF1)
+        return false;
+
+    // Validate packet type
+    if ((quint8)m_buf[2] != TYPE_INTERVENTION_RESULT)
+        return false;
+
+    // Validate dummy/static CRC footer
+    if ((quint8)m_buf[11] != 0x12 || (quint8)m_buf[12] != 0x34)
+        return false;
+
+    // Fill output struct
+    out.planId =
+        quint32((quint8)m_buf[4]) |
+        (quint32((quint8)m_buf[5]) << 8) |
+        (quint32((quint8)m_buf[6]) << 16) |
+        (quint32((quint8)m_buf[7]) << 24);
+
+    // Lifecycle state:
+    // 0 = IDLE
+    // 1 = EXECUTING
+    // 2 = COMPLETED
+    // 3 = FAILED
+    // 4 = REJECTED
+    out.state = (quint8)m_buf[8];
+
+    // Board/node involved in execution
+    out.boardId = (quint8)m_buf[9];
+
+    // Number of motors involved
+    out.motorCount = (quint8)m_buf[10];
+
+    // ======================================================
+    // Validate intervention lifecycle state.
+    //
+    // Valid states:
+    // 0 = IDLE
+    // 1 = EXECUTING
+    // 2 = COMPLETED
+    // 3 = FAILED
+    // 4 = REJECTED
+    //
+    // If state is outside this range, this is not a valid
+    // INTERVENTION_RESULT packet or the stream is misaligned.
+    // ======================================================
+    if (out.state > 4) {
+        qWarning() << "[INTERVENTION_RESULT] Invalid state:"
+                   << out.state
+                   << "raw =" << m_buf.left(INTERVENTION_RESULT_LEN).toHex(' ');
+
+        return false;
+    }
+
+
+
+
+    // Remove parsed packet from serial buffer
+    m_buf.remove(0, INTERVENTION_RESULT_LEN);
+
+    qDebug() << "[MAIN->UI] INTERVENTION_RESULT"
+             << "plan_id =" << out.planId
+             << "state =" << out.state
+             << "board =" << out.boardId
+             << "motors =" << out.motorCount;
+
+    return true;
+}
+
+/*========================================================================================*/
+// Main -> UI
+// Try parse intervention plan packet
+//
+// TYPE = 0x51
+//
+// Current minimal packet format:
+// AA 55 51 SEQ
+// planL planH
+// board_id
+// target_zone
+// motor_count
+// risk_score
+// risk_level
+// recommendation_code
+// reason_code
+// 12 34
+//
+// Total length = 15 bytes
+//
+// Returns:
+// true  = packet parsed and removed from buffer
+// false = packet invalid or incomplete
+//
+// Note:
+// Motor vector items are not decoded in this first version.
+// This function only parses the plan header needed for UI.
+// ======================================================
+bool SerialReceiver::tryParseInterventionPlan(InterventionPlan &out)
+{
+    static constexpr int INTERVENTION_PLAN_LEN = 15;
+
+    // Wait until full packet is available
+    if (m_buf.size() < INTERVENTION_PLAN_LEN)
+        return false;
+
+    // Validate header
+    if ((quint8)m_buf[0] != SOF0 || (quint8)m_buf[1] != SOF1)
+        return false;
+
+    // Validate packet type
+    if ((quint8)m_buf[2] != TYPE_INTERVENTION_PLAN)
+        return false;
+
+    // Validate dummy/static CRC footer
+    if ((quint8)m_buf[13] != 0x12 || (quint8)m_buf[14] != 0x34)
+        return false;
+
+    // plan_id is uint16 little-endian
+    out.planId =
+        quint16((quint8)m_buf[4]) |
+        (quint16((quint8)m_buf[5]) << 8);
+
+    // Main board / target board id
+    out.boardId = (quint8)m_buf[6];
+
+    // Target body/bed zone
+    out.targetZone = (quint8)m_buf[7];
+
+    // Number of motors in this intervention
+    out.motorCount = (quint8)m_buf[8];
+
+    // Risk information generated by Main Board
+    out.riskScore = (quint8)m_buf[9];
+    out.riskLevel = (quint8)m_buf[10];
+
+    // Recommendation and reason codes for UI explanation
+    out.recommendationCode = (quint8)m_buf[11];
+    out.reasonCode = (quint8)m_buf[12];
+
+    // Remove parsed packet from serial buffer
+    m_buf.remove(0, INTERVENTION_PLAN_LEN);
+
+    qDebug() << "[MAIN->UI] INTERVENTION_PLAN"
+             << "plan_id =" << out.planId
+             << "board =" << out.boardId
+             << "zone =" << out.targetZone
+             << "motors =" << out.motorCount
+             << "risk =" << out.riskScore
+             << "level =" << out.riskLevel
+             << "recommendation =" << out.recommendationCode
+             << "reason =" << out.reasonCode;
+
+    return true;
+}
 
 /*========================================================================================*/
 
+/*========================================================================================*/
+
+/*========================================================================================*/
+
+/*========================================================================================*/
 
 /*========================================================================================*/

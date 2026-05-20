@@ -686,13 +686,137 @@ MainWindow::MainWindow(QWidget *parent)
         debugContentLayout->addLayout(topDebugRow);
         debugContentLayout->addWidget(m_grpDebugData);
 
+
+        /* =========================================================
+ *  Main Board Debug Console
+ *
+ *  Purpose:
+ *  - UI-side control panel for Main Board debug commands
+ *  - protocol simulation
+ *  - intervention workflow testing
+ *  - future motor/CAN diagnostics
+ *
+ *  IMPORTANT:
+ *  This section is for development/service use only.
+ *  In production, it can be hidden or permission-locked.
+ * ========================================================= */
+        m_grpMainBoardDebug = new QGroupBox("Main Board Debug Console", m_debugContentHost);
+        m_grpMainBoardDebug->setStyleSheet(debugGroupStyle);
+
+        QVBoxLayout *mainBoardDbgLayout = new QVBoxLayout(m_grpMainBoardDebug);
+        mainBoardDbgLayout->setContentsMargins(14, 10, 14, 12);
+        mainBoardDbgLayout->setSpacing(8);
+
+        // Master safety gate for debug commands
+        m_chkEnableMainBoardDebug = new QCheckBox("Enable Main Board debug commands", m_grpMainBoardDebug);
+        m_chkEnableMainBoardDebug->setChecked(false);
+        m_chkEnableMainBoardDebug->setStyleSheet(checkStyle);
+        mainBoardDbgLayout->addWidget(m_chkEnableMainBoardDebug);
+
+        // Debug command buttons
+        QGridLayout *mainBoardDbgButtonGrid = new QGridLayout();
+        mainBoardDbgButtonGrid->setHorizontalSpacing(8);
+        mainBoardDbgButtonGrid->setVerticalSpacing(8);
+
+        m_btnDbgTestPlan = new QPushButton("Test Intervention Plan", m_grpMainBoardDebug);
+        m_btnDbgResultExecuting = new QPushButton("Result: Executing", m_grpMainBoardDebug);
+        m_btnDbgResultCompleted = new QPushButton("Result: Completed", m_grpMainBoardDebug);
+        m_btnDbgResultFailed = new QPushButton("Result: Failed", m_grpMainBoardDebug);
+
+        m_btnDbgTestPlan->setEnabled(false);
+        m_btnDbgResultExecuting->setEnabled(false);
+        m_btnDbgResultCompleted->setEnabled(false);
+        m_btnDbgResultFailed->setEnabled(false);
+
+
+        mainBoardDbgButtonGrid->addWidget(m_btnDbgTestPlan, 0, 0);
+        mainBoardDbgButtonGrid->addWidget(m_btnDbgResultExecuting, 0, 1);
+        mainBoardDbgButtonGrid->addWidget(m_btnDbgResultCompleted, 1, 0);
+        mainBoardDbgButtonGrid->addWidget(m_btnDbgResultFailed, 1, 1);
+
+        mainBoardDbgLayout->addLayout(mainBoardDbgButtonGrid);
+
+        // Status labels
+        m_lblDbgMainBoardStatus = new QLabel("Status: Debug disabled", m_grpMainBoardDebug);
+        m_lblDbgLastTx = new QLabel("Last TX: --", m_grpMainBoardDebug);
+        m_lblDbgLastRx = new QLabel("Last RX: --", m_grpMainBoardDebug);
+
+        m_lblDbgMainBoardStatus->setStyleSheet(debugValueStyle);
+        m_lblDbgLastTx->setStyleSheet(debugValueStyle);
+        m_lblDbgLastRx->setStyleSheet(debugValueStyle);
+
+        mainBoardDbgLayout->addWidget(m_lblDbgMainBoardStatus);
+        mainBoardDbgLayout->addWidget(m_lblDbgLastTx);
+        mainBoardDbgLayout->addWidget(m_lblDbgLastRx);
+
+        debugContentLayout->addWidget(m_grpMainBoardDebug);
+
+        // ======================================================
+        // DEBUG:
+        // Enable/disable Main Board debug mode.
+        //
+        // This controls whether simulation/debug commands
+        // are allowed to be sent to Main Board.
+        // ======================================================
+        connect(m_chkEnableMainBoardDebug,
+                &QCheckBox::toggled,
+                this,
+                [this](bool enabled)
+                {
+                    qDebug() << "[DEBUG UI] Main Board debug toggled =" << enabled;
+
+                    m_btnDbgTestPlan->setEnabled(enabled);
+
+                    m_btnDbgResultExecuting->setEnabled(enabled);
+
+                    m_btnDbgResultCompleted->setEnabled(enabled);
+
+                    m_btnDbgResultFailed->setEnabled(enabled);
+
+                    m_lblDbgMainBoardStatus->setText(
+                        enabled
+                            ? "Status: Debug commands ENABLED"
+                            : "Status: Debug commands DISABLED");
+                });
+
         debugRootLayout->addWidget(m_debugContentHost, 0, Qt::AlignHCenter);
         debugRootLayout->addStretch(1);
     }
 
-    /* =========================================================
-     *  2.6) Analytics Page (runtime-built, separate tab)
-     * ========================================================= */
+
+    // ======================================================
+    // DEBUG:
+    // Test Intervention Plan button.
+    //
+    // When clicked:
+    // UI sends DEBUG_COMMAND to Main Board.
+    //
+    // Expected:
+    // Main Board responds with TYPE 0x51 INTERVENTION_PLAN.
+    // ======================================================
+    connect(m_btnDbgTestPlan,
+            &QPushButton::clicked,
+            this,
+            [this]()
+            {
+                qDebug() << "[DEBUG UI] Test Intervention Plan button clicked";
+
+                if (!m_chkEnableMainBoardDebug->isChecked()) {
+                    qWarning() << "[DEBUG UI] Debug mode is disabled";
+                    return;
+                }
+
+                if (!m_port.isOpen()) {
+                    qWarning() << "[DEBUG UI] Serial port is closed";
+                    m_lblDbgMainBoardStatus->setText("Status: Serial CLOSED");
+                    return;
+                }
+
+                m_rx.sendDebugCommand(1, 1);
+
+                m_lblDbgMainBoardStatus->setText("Status: Test plan requested");
+                m_lblDbgLastTx->setText("Last TX: DEBUG_COMMAND cmd=1 param=1");
+            });
     /* =========================================================
      *  2.6) Analytics Page (runtime-built, separate tab)
      * ========================================================= */
@@ -1411,12 +1535,210 @@ MainWindow::MainWindow(QWidget *parent)
     recLay->addWidget(m_lblRecommendation);
 
     rightLayout->addWidget(grpRec);
+    /* =========================================================
+ *  Intervention Card
+ *
+ *  Purpose:
+ *  - Display intervention plans received from Main Board
+ *  - Show target zone, risk, motor count and current state
+ *  - Provide Approve / Reject actions for nurse/operator
+ *
+ *  Protocol flow:
+ *  Main -> UI : TYPE 0x51 INTERVENTION_PLAN
+ *  UI   -> Main : TYPE 0x52 APPROVE or 0x53 REJECT
+ *
+ *  Current phase:
+ *  - UI card only
+ *  - Buttons exist but command wiring comes in next phase
+ * ========================================================= */
+    m_grpInterventionCard = new QGroupBox("Suggested Intervention", rightPanel);
+    m_grpInterventionCard->setStyleSheet(sideGroupStyle);
+
+    QVBoxLayout *interventionLay = new QVBoxLayout(m_grpInterventionCard);
+    interventionLay->setContentsMargins(10, 10, 10, 10);
+    interventionLay->setSpacing(8);
+
+    // Main info labels
+    m_lblInterventionPlanId = new QLabel("Plan: --", m_grpInterventionCard);
+    m_lblInterventionTargetZone = new QLabel("Target: --", m_grpInterventionCard);
+    m_lblInterventionRisk = new QLabel("Risk: --", m_grpInterventionCard);
+    m_lblInterventionMotorCount = new QLabel("Motors: --", m_grpInterventionCard);
+    m_lblInterventionStatus = new QLabel("Status: No pending plan", m_grpInterventionCard);
+
+    const QString interventionLabelStyle =
+        "QLabel {"
+        "  color: #E5E7EB;"
+        "  background-color: #0F1720;"
+        "  border: 1px solid #334155;"
+        "  border-radius: 8px;"
+        "  padding: 7px 9px;"
+        "  font-size: 12px;"
+        "  font-weight: 600;"
+        "}";
+
+    m_lblInterventionPlanId->setStyleSheet(interventionLabelStyle);
+    m_lblInterventionTargetZone->setStyleSheet(interventionLabelStyle);
+    m_lblInterventionRisk->setStyleSheet(interventionLabelStyle);
+    m_lblInterventionMotorCount->setStyleSheet(interventionLabelStyle);
+    m_lblInterventionStatus->setStyleSheet(interventionLabelStyle);
+
+    interventionLay->addWidget(m_lblInterventionPlanId);
+    interventionLay->addWidget(m_lblInterventionTargetZone);
+    interventionLay->addWidget(m_lblInterventionRisk);
+    interventionLay->addWidget(m_lblInterventionMotorCount);
+    interventionLay->addWidget(m_lblInterventionStatus);
+
+    // Action buttons row
+    QHBoxLayout *interventionButtonRow = new QHBoxLayout();
+    interventionButtonRow->setSpacing(8);
+
+    m_btnApproveIntervention = new QPushButton("Approve", m_grpInterventionCard);
+    m_btnRejectIntervention = new QPushButton("Reject", m_grpInterventionCard);
+
+    m_btnApproveIntervention->setEnabled(false);
+    m_btnRejectIntervention->setEnabled(false);
+
+    m_btnApproveIntervention->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #14532D;"
+        "  border: 1px solid #22C55E;"
+        "  border-radius: 8px;"
+        "  padding: 7px 10px;"
+        "  color: #DCFCE7;"
+        "  font-weight: 700;"
+        "}"
+        "QPushButton:disabled {"
+        "  background-color: #111827;"
+        "  border: 1px solid #334155;"
+        "  color: #64748B;"
+        "}"
+        );
+
+    m_btnRejectIntervention->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #7F1D1D;"
+        "  border: 1px solid #EF4444;"
+        "  border-radius: 8px;"
+        "  padding: 7px 10px;"
+        "  color: #FEE2E2;"
+        "  font-weight: 700;"
+        "}"
+        "QPushButton:disabled {"
+        "  background-color: #111827;"
+        "  border: 1px solid #334155;"
+        "  color: #64748B;"
+        "}"
+        );
+
+    interventionButtonRow->addWidget(m_btnApproveIntervention);
+    interventionButtonRow->addWidget(m_btnRejectIntervention);
+
+    interventionLay->addLayout(interventionButtonRow);
+
+    // Start hidden until a valid 0x51 plan arrives
+    m_grpInterventionCard->setVisible(false);
+
+    rightLayout->addWidget(m_grpInterventionCard);
     rightLayout->addStretch(1);
 
     mainLayout->addWidget(leftPanel, 4);
     mainLayout->addWidget(rightPanel, 1);
 
     hostLayout->addWidget(heatmapPageContainer);
+
+
+    // ======================================================
+    // Intervention Approve button
+    //
+    // User approves the currently pending intervention plan.
+    //
+    // UI -> Main Board:
+    // TYPE = 0x52 APPROVE_INTERVENTION
+    //
+    // Packet:
+    // AA 55 52 SEQ planL planH 12 34
+    //
+    // Safety:
+    // - Only send if a valid pending plan exists.
+    // - Disable both buttons immediately after sending.
+    // - UI waits for Main Board lifecycle result 0x54.
+    // ======================================================
+    connect(m_btnApproveIntervention,
+            &QPushButton::clicked,
+            this,
+            [this]()
+            {
+                if (!m_hasPendingIntervention) {
+                    qWarning() << "[INTERVENTION] Approve ignored: no pending plan";
+                    return;
+                }
+
+                qDebug() << "[INTERVENTION] Approve clicked"
+                         << "plan_id =" << m_pendingInterventionPlanId;
+
+                m_rx.sendInterventionApprove(m_pendingInterventionPlanId);
+
+                if (m_lblInterventionStatus)
+                    m_lblInterventionStatus->setText("Status: Approve sent, waiting for Main...");
+
+                if (m_btnApproveIntervention)
+                    m_btnApproveIntervention->setEnabled(false);
+
+                if (m_btnRejectIntervention)
+                    m_btnRejectIntervention->setEnabled(false);
+
+                if (m_lblDbgLastTx)
+                    m_lblDbgLastTx->setText(
+                        QString("Last TX: APPROVE plan_id=%1")
+                            .arg(m_pendingInterventionPlanId));
+            });
+
+
+    // ======================================================
+    // Intervention Reject button
+    //
+    // User rejects the currently pending intervention plan.
+    //
+    // UI -> Main Board:
+    // TYPE = 0x53 REJECT_INTERVENTION
+    //
+    // Packet:
+    // AA 55 53 SEQ planL planH 12 34
+    //
+    // Safety:
+    // - Only send if a valid pending plan exists.
+    // - Disable both buttons immediately after sending.
+    // - UI waits for Main Board result 0x54 REJECTED.
+    // ======================================================
+    connect(m_btnRejectIntervention,
+            &QPushButton::clicked,
+            this,
+            [this]()
+            {
+                if (!m_hasPendingIntervention) {
+                    qWarning() << "[INTERVENTION] Reject ignored: no pending plan";
+                    return;
+                }
+
+                qDebug() << "[INTERVENTION] Reject clicked"
+                         << "plan_id =" << m_pendingInterventionPlanId;
+
+                m_rx.sendInterventionReject(m_pendingInterventionPlanId);
+
+                if (m_lblInterventionStatus)
+                    m_lblInterventionStatus->setText("Status: Reject sent, waiting for Main...");
+
+                if (m_btnApproveIntervention)
+                    m_btnApproveIntervention->setEnabled(false);
+
+                if (m_btnRejectIntervention)
+                    m_btnRejectIntervention->setEnabled(false);
+
+                if (m_lblDbgLastTx)
+                    m_lblDbgLastTx->setText(
+                        QString("Last TX: REJECT plan_id=%1")
+                            .arg(m_pendingInterventionPlanId));
+            });
 
 
     // ====================== Alert Pulse Effect ======================
@@ -1544,7 +1866,32 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(&m_rx, &SerialReceiver::nodeHealthReceived,
             this, &MainWindow::onNodeHealth);
-
+    // ======================================================
+    // Main Board -> UI
+    // Intervention plan received.
+    //
+    // TYPE = 0x51
+    //
+    // This signal is emitted by SerialReceiver after
+    // a valid INTERVENTION_PLAN packet is parsed.
+    // ======================================================
+    connect(&m_rx,
+            &SerialReceiver::interventionPlanReceived,
+            this,
+            &MainWindow::onInterventionPlanReceived);
+    // ======================================================
+    // Main Board -> UI
+    // Intervention lifecycle/result received.
+    //
+    // TYPE = 0x54
+    //
+    // Updates card status:
+    // EXECUTING / COMPLETED / FAILED / REJECTED
+    // ======================================================
+    connect(&m_rx,
+            &SerialReceiver::interventionResultReceived,
+            this,
+            &MainWindow::onInterventionResultReceived);
     /* =========================================================
      *  9) Initial Refresh
      * ========================================================= */
@@ -1637,6 +1984,7 @@ MainWindow::MainWindow(QWidget *parent)
                 if (m_hasValidSummary)
                     renderSummaryToDashboard(m_lastSummary);
             });
+
 }
 
 /*========================================================================================*/
@@ -1742,6 +2090,35 @@ void MainWindow::onConnectClicked()
     }
 
     setConnectedUi(true);
+
+    // ======================================================
+    // Reset live UI state after serial connection.
+    //
+    // Reason:
+    // At startup/reconnect the first UART packets may be partial.
+    // Clearing UI state avoids showing stale or half-valid heatmap
+    // until fresh BED_SNAPSHOT / STATUS / SUMMARY arrive.
+    // ======================================================
+    m_hasValidSummary = false;
+    m_frameSync = FrameSyncState();
+
+    if (m_lblFrameSync)
+        m_lblFrameSync->setText("Frame: waiting...");
+
+    if (m_lblRiskLive)
+        m_lblRiskLive->setText("RISK --");
+
+    if (m_lblMovementLive)
+        m_lblMovementLive->setText("LAST MOVE --");
+
+    if (m_lblSacrum)
+        m_lblSacrum->setText("SACRUM\n--");
+
+    if (m_lblHeelLeft)
+        m_lblHeelLeft->setText("LEFT HEEL\n--");
+
+    if (m_lblHeelRight)
+        m_lblHeelRight->setText("RIGHT HEEL\n--");
 
     if (m_lblStatusSettings)
         m_lblStatusSettings->setText("Connected: " + portName);
@@ -3280,5 +3657,190 @@ bool MainWindow::isCurrentFrameSynchronized() const
            (m_frameSync.nodeHealthFrameId == f) &&
            (m_frameSync.summaryFrameId == f);
 }
+
+/*========================================================================================*/
+
+// ======================================================
+// Main Board -> UI
+// Handle received intervention plan.
+//
+// TYPE = 0x51
+//
+// Current behavior:
+// - log plan data
+// - update Debug Console labels
+//
+// Next phase:
+// - store current plan_id
+// - show approve/reject intervention card
+// ======================================================
+void MainWindow::onInterventionPlanReceived(const InterventionPlan &plan)
+{
+    qDebug() << "[UI] Intervention plan received:"
+             << "plan_id =" << plan.planId
+             << "board =" << plan.boardId
+             << "zone =" << plan.targetZone
+             << "motors =" << plan.motorCount
+             << "risk =" << plan.riskScore
+             << "level =" << plan.riskLevel
+             << "rec =" << plan.recommendationCode
+             << "reason =" << plan.reasonCode;
+
+    if (m_lblDbgMainBoardStatus) {
+        m_lblDbgMainBoardStatus->setText(
+            QString("Status: PLAN received id=%1").arg(plan.planId));
+    }
+
+    if (m_lblDbgLastRx) {
+        m_lblDbgLastRx->setText(
+            QString("Last RX: PLAN id=%1 zone=%2 motors=%3 risk=%4")
+                .arg(plan.planId)
+                .arg(plan.targetZone)
+                .arg(plan.motorCount)
+                .arg(plan.riskScore));
+    }
+
+    // ======================================================
+    // Show/update intervention workflow card.
+    //
+    // A valid TYPE 0x51 plan has been received from Main Board.
+    // ======================================================
+
+    // Cache current pending plan
+    m_pendingInterventionPlanId = plan.planId;
+    m_hasPendingIntervention = true;
+
+    // Update runtime labels
+    if (m_lblInterventionPlanId) {
+        m_lblInterventionPlanId->setText(
+            QString("Plan ID: %1").arg(plan.planId));
+    }
+
+    if (m_lblInterventionTargetZone) {
+        m_lblInterventionTargetZone->setText(
+            QString("Target Zone: %1").arg(plan.targetZone));
+    }
+
+    if (m_lblInterventionRisk) {
+        m_lblInterventionRisk->setText(
+            QString("Risk Score: %1").arg(plan.riskScore));
+    }
+
+    if (m_lblInterventionMotorCount) {
+        m_lblInterventionMotorCount->setText(
+            QString("Motor Count: %1").arg(plan.motorCount));
+    }
+
+    if (m_lblInterventionStatus) {
+        m_lblInterventionStatus->setText(
+            "Status: Waiting for approval");
+    }
+
+    // Enable user actions
+    if (m_btnApproveIntervention)
+        m_btnApproveIntervention->setEnabled(true);
+
+    if (m_btnRejectIntervention)
+        m_btnRejectIntervention->setEnabled(true);
+
+    // Reveal intervention card
+    if (m_grpInterventionCard)
+        m_grpInterventionCard->setVisible(true);
+
+}
+/*========================================================================================*/
+/*========================================================================================*/
+
+// ======================================================
+// Main Board -> UI
+// Handle intervention lifecycle/result packet.
+//
+// TYPE = 0x54
+//
+// State:
+// 0 = IDLE
+// 1 = EXECUTING
+// 2 = COMPLETED
+// 3 = FAILED
+// 4 = REJECTED
+// ======================================================
+void MainWindow::onInterventionResultReceived(const InterventionResult &result)
+{
+    qDebug() << "[UI] Intervention result received:"
+             << "plan_id =" << result.planId
+             << "state =" << result.state
+             << "board =" << result.boardId
+             << "motors =" << result.motorCount;
+
+    if (!m_hasPendingIntervention ||
+        result.planId != m_pendingInterventionPlanId) {
+
+        qWarning() << "[UI] Ignoring intervention result for stale/unknown plan"
+                   << "result_plan =" << result.planId
+                   << "pending_plan =" << m_pendingInterventionPlanId;
+
+        return;
+    }
+
+    QString statusText;
+
+    switch (result.state)
+    {
+    case 0:
+        statusText = "Status: Idle";
+        break;
+
+    case 1:
+        statusText = "Status: Executing...";
+        break;
+
+    case 2:
+        statusText = "Status: Completed";
+        m_hasPendingIntervention = false;
+        break;
+
+    case 3:
+        statusText = "Status: Failed";
+        m_hasPendingIntervention = false;
+        break;
+
+    case 4:
+        statusText = "Status: Rejected";
+        m_hasPendingIntervention = false;
+        break;
+
+    default:
+        statusText = "Status: Unknown result";
+        break;
+    }
+
+    if (m_lblInterventionStatus)
+        m_lblInterventionStatus->setText(statusText);
+
+    if (m_lblDbgLastRx) {
+        m_lblDbgLastRx->setText(
+            QString("Last RX: RESULT plan=%1 state=%2")
+                .arg(result.planId)
+                .arg(result.state));
+    }
+
+    // Keep buttons disabled after execution starts or terminal state arrives.
+    if (m_btnApproveIntervention)
+        m_btnApproveIntervention->setEnabled(false);
+
+    if (m_btnRejectIntervention)
+        m_btnRejectIntervention->setEnabled(false);
+}
+/*========================================================================================*/
+
+/*========================================================================================*/
+
+/*========================================================================================*/
+
+/*========================================================================================*/
+
+/*========================================================================================*/
+
+/*========================================================================================*/
 
 /*========================================================================================*/

@@ -132,6 +132,74 @@ private:
     QRect m_dbgLeftHeelRect;
     QRect m_dbgRightHeelRect;
 
+    // ======================================================
+    // Main Board Debug Console
+    //
+    // UI controls for:
+    // - UART protocol simulation
+    // - intervention workflow testing
+    // - fake packet generation
+    // - firmware debug commands
+    // - future CAN/motor diagnostics
+    //
+    // These widgets belong to the Debug page.
+    //
+    // IMPORTANT:
+    // This section is intended for:
+    // - development
+    // - validation
+    // - engineering/service workflows
+    //
+    // In future production builds these controls
+    // can be hidden or restricted.
+    // ======================================================
+
+    // Main debug console group container
+    QGroupBox *m_grpMainBoardDebug = nullptr;
+
+
+    // ======================================================
+    // Master enable switch for Main Board debug commands.
+    //
+    // When disabled:
+    // UI must NOT send simulation/debug commands
+    // to Main Board.
+    // ======================================================
+    QCheckBox *m_chkEnableMainBoardDebug = nullptr;
+
+
+    // ======================================================
+    // Simulation/debug command buttons.
+    //
+    // These buttons will later trigger:
+    // TYPE = 0x5A DEBUG_COMMAND
+    //
+    // for intervention and protocol testing.
+    // ======================================================
+    QPushButton *m_btnDbgTestPlan = nullptr;
+
+    QPushButton *m_btnDbgResultExecuting = nullptr;
+
+    QPushButton *m_btnDbgResultCompleted = nullptr;
+
+    QPushButton *m_btnDbgResultFailed = nullptr;
+
+
+    // ======================================================
+    // Runtime protocol/debug status labels.
+    //
+    // These labels will later display:
+    // - last transmitted debug command
+    // - last received simulation packet
+    // - current debug state
+    // ======================================================
+    QLabel *m_lblDbgMainBoardStatus = nullptr;
+
+    QLabel *m_lblDbgLastTx = nullptr;
+
+    QLabel *m_lblDbgLastRx = nullptr;
+
+
     /* ====================== Live Monitoring / Dashboard UI ====================== */
     QLabel *m_lblRiskLive = nullptr;
     QLabel *m_lblMovementLive = nullptr;
@@ -142,6 +210,42 @@ private:
     QLabel *m_lblHeelLeft = nullptr;
     QLabel *m_lblHeelRight = nullptr;
     QLabel *m_lblRecommendation = nullptr;
+
+    // ======================================================
+    // Intervention Workflow UI
+    //
+    // Displays Main Board suggested intervention plans.
+    //
+    // Flow:
+    // Main Board -> TYPE 0x51 INTERVENTION_PLAN
+    // UI displays pending intervention card
+    // User -> Approve / Reject
+    // UI -> TYPE 0x52 / 0x53
+    //
+    // Future:
+    // - lifecycle states
+    // - execution progress
+    // - intervention history
+    // - before/after analytics
+    // ======================================================
+
+    // Main intervention container
+    QGroupBox *m_grpInterventionCard = nullptr;
+
+    // Runtime intervention info labels
+    QLabel *m_lblInterventionPlanId = nullptr;
+    QLabel *m_lblInterventionTargetZone = nullptr;
+    QLabel *m_lblInterventionRisk = nullptr;
+    QLabel *m_lblInterventionMotorCount = nullptr;
+    QLabel *m_lblInterventionStatus = nullptr;
+
+    // User actions
+    QPushButton *m_btnApproveIntervention = nullptr;
+    QPushButton *m_btnRejectIntervention = nullptr;
+
+    // Current pending plan cache
+    quint16 m_pendingInterventionPlanId = 0;
+    bool m_hasPendingIntervention = false;
 
     /* ====================== Alert Blink State ====================== */
     QTimer *m_alertBlinkTimer = nullptr;   // تایمر blink برای alertهای critical
@@ -218,7 +322,23 @@ private slots:
     void onNodeHealth(const NodeHealthPacket &pkt);
     void updateLiveMonitoring();
     void onSummaryReceived(const SummaryData &summary);
-
+    // ======================================================
+    // Main Board -> UI
+    // Called when SerialReceiver decodes TYPE 0x51
+    // INTERVENTION_PLAN.
+    //
+    // This is the first UI-level entry point for
+    // intervention workflow.
+    // ======================================================
+    void onInterventionPlanReceived(const InterventionPlan &plan);
+    // ======================================================
+    // Main Board -> UI
+    // Called when SerialReceiver decodes TYPE 0x54
+    // INTERVENTION_RESULT.
+    //
+    // Updates intervention lifecycle status on UI card.
+    // ======================================================
+    void onInterventionResultReceived(const InterventionResult &result);
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
 };
