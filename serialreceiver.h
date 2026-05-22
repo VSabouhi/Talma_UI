@@ -4,6 +4,8 @@
 #include <QByteArray>
 #include <array>
 #include "summarydata.h"
+#include <QElapsedTimer>
+#include <QMap>
 /*========================================================================================*/
 
 struct NodePacket {
@@ -285,5 +287,30 @@ private:
     // UI -> Main Board
     // Debug/simulation command packet
     static constexpr quint8 TYPE_DEBUG_COMMAND = 0x5A;
+
+    // ======================================================
+    // UART Packet Statistics
+    //
+    // Purpose:
+    // Detect packet delay, seq jumps, and possible packet loss.
+    //
+    // This does NOT change parser behavior.
+    // It only monitors successfully parsed packets.
+    // ======================================================
+    struct PacketStats
+    {
+        bool initialized = false;
+        quint8 lastSeq = 0;
+        quint32 rxCount = 0;
+        quint32 missedCount = 0;
+        qint64 lastRxMs = 0;
+        qint64 maxGapMs = 0;
+    };
+
+    QElapsedTimer m_rxStatsClock;
+    QMap<quint8, PacketStats> m_packetStats;
+
+    // Called after a packet is successfully parsed.
+    void updatePacketStats(quint8 type, quint8 seq, quint16 frameId = 0);
 };
 /*========================================================================================*/

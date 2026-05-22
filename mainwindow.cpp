@@ -24,6 +24,7 @@
 #include "sensordelegate.h"
 #include "sensorstatus.h"
 #include "summarydata.h"
+#include "talma_debug.h"
 #include <QGraphicsDropShadowEffect>
 /*========================================================================================*/
 
@@ -763,7 +764,9 @@ MainWindow::MainWindow(QWidget *parent)
                 this,
                 [this](bool enabled)
                 {
-                    qDebug() << "[DEBUG UI] Main Board debug toggled =" << enabled;
+                    #if TALMA_DEBUG_MAINBOARD
+                        qDebug() << "[DEBUG UI] Main Board debug toggled =" << enabled;
+                    #endif
 
                     m_btnDbgTestPlan->setEnabled(enabled);
 
@@ -777,6 +780,56 @@ MainWindow::MainWindow(QWidget *parent)
                         enabled
                             ? "Status: Debug commands ENABLED"
                             : "Status: Debug commands DISABLED");
+                });
+
+
+        // ======================================================
+        // DEBUG:
+        // Request Main Board to send fake INTERVENTION_RESULT
+        // with state = EXECUTING.
+        // ======================================================
+        connect(m_btnDbgResultExecuting,
+                &QPushButton::clicked,
+                this,
+                [this]()
+                {
+                    #if TALMA_DEBUG_MAINBOARD
+                        qDebug() << "[DEBUG UI] Fake EXECUTING result requested";
+                    #endif
+                    m_rx.sendDebugCommand(2, 1);
+                });
+
+        // ======================================================
+        // DEBUG:
+        // Request Main Board to send fake INTERVENTION_RESULT
+        // with state = COMPLETED.
+        // ======================================================
+        connect(m_btnDbgResultCompleted,
+                &QPushButton::clicked,
+                this,
+                [this]()
+                {
+                    #if TALMA_DEBUG_MAINBOARD
+                        qDebug() << "[DEBUG UI] Fake COMPLETED result requested";
+                    #endif
+                    m_rx.sendDebugCommand(3, 1);
+                });
+
+        // ======================================================
+        // DEBUG:
+        // Request Main Board to send fake INTERVENTION_RESULT
+        // with state = FAILED.
+        // ======================================================
+        connect(m_btnDbgResultFailed,
+                &QPushButton::clicked,
+                this,
+                [this]()
+                {
+                    #if TALMA_DEBUG_MAINBOARD
+                        qDebug() << "[DEBUG UI] Fake FAILED result requested";
+                    #endif
+                    m_rx.sendDebugCommand(4, 1);
+
                 });
 
         debugRootLayout->addWidget(m_debugContentHost, 0, Qt::AlignHCenter);
@@ -799,7 +852,9 @@ MainWindow::MainWindow(QWidget *parent)
             this,
             [this]()
             {
-                qDebug() << "[DEBUG UI] Test Intervention Plan button clicked";
+                #if TALMA_DEBUG_MAINBOARD
+                 qDebug() << "[DEBUG UI] Test Intervention Plan button clicked";
+                #endif
 
                 if (!m_chkEnableMainBoardDebug->isChecked()) {
                     qWarning() << "[DEBUG UI] Debug mode is disabled";
@@ -2578,7 +2633,7 @@ void MainWindow::onSummaryReceived(const SummaryData &summary)
     // Performance:
     // Keep collecting history always,
     // but repaint/update charts only when Analytics tab is visible.
-    if (ui->tabs->currentWidget() == m_tabAnalytics)
+  /*  if (ui->tabs->currentWidget() == m_tabAnalytics)
     {
     static int x = 0;
 
@@ -2664,7 +2719,7 @@ void MainWindow::onSummaryReceived(const SummaryData &summary)
     }
 
     x++;
-}
+}*/
 
     /*qDebug() << "[SUMMARY]"
              << "uptime=" << summary.uptimeS
@@ -2700,6 +2755,9 @@ void MainWindow::rebuildAnalyticsChartsFromHistory()
     m_seriesShoulders->clear();
 
     const auto &samples = m_trendHistory.samples();
+
+    static int analyticsX = 0;
+    analyticsX = 0;
 
     int x = 0;
     for (const auto &s : samples) {
@@ -2748,7 +2806,9 @@ void MainWindow::rebuildAnalyticsChartsFromHistory()
         }
     }
 
-    qDebug() << "[ANALYTICS] charts rebuilt from history, samples =" << samples.size();
+    #if TALMA_DEBUG_ANALYTICS
+        qDebug() << "[ANALYTICS] charts rebuilt from history, samples =" << samples.size();
+    #endif
 }
 /*========================================================================================*/
 
@@ -3313,14 +3373,14 @@ void MainWindow::renderSummaryToDashboard(const SummaryData &summary)
 
     m_lblAlerts->setText(alertText);
 
-    qDebug() << "[ALERT CHECK]"
+    /*qDebug() << "[ALERT CHECK]"
              << "alertText =" << alertText
              << "risk =" << summary.riskScore
              << "riskLevel =" << summary.riskLevel
              << "sacrumExpMin =" << sacrumExpMin
              << "noMoveMin =" << noMoveMin
              << "deviceAlert =" << summary.alertActive
-             << "severity =" << summary.alertSeverity;
+             << "severity =" << summary.alertSeverity;*/
 
     QString alertStyle;
 
@@ -3814,15 +3874,17 @@ bool MainWindow::isCurrentFrameSynchronized() const
 // ======================================================
 void MainWindow::onInterventionPlanReceived(const InterventionPlan &plan)
 {
-    qDebug() << "[UI] Intervention plan received:"
-             << "plan_id =" << plan.planId
-             << "board =" << plan.boardId
-             << "zone =" << plan.targetZone
-             << "motors =" << plan.motorCount
-             << "risk =" << plan.riskScore
-             << "level =" << plan.riskLevel
-             << "rec =" << plan.recommendationCode
-             << "reason =" << plan.reasonCode;
+    #if TALMA_DEBUG_INTERVENTION
+        qDebug() << "[UI] Intervention plan received:"
+                 << "plan_id =" << plan.planId
+                 << "board =" << plan.boardId
+                 << "zone =" << plan.targetZone
+                 << "motors =" << plan.motorCount
+                 << "risk =" << plan.riskScore
+                 << "level =" << plan.riskLevel
+                 << "rec =" << plan.recommendationCode
+                 << "reason =" << plan.reasonCode;
+    #endif
 
     if (m_lblDbgMainBoardStatus) {
         m_lblDbgMainBoardStatus->setText(
@@ -3895,11 +3957,13 @@ void MainWindow::onInterventionPlanReceived(const InterventionPlan &plan)
 // ======================================================
 void MainWindow::onInterventionResultReceived(const InterventionResult &result)
 {
-    qDebug() << "[UI] Intervention result received:"
-             << "plan_id =" << result.planId
-             << "state =" << result.state
-             << "board =" << result.boardId
-             << "motors =" << result.motorCount;
+    #if TALMA_DEBUG_INTERVENTION
+        qDebug() << "[UI] Intervention result received:"
+                 << "plan_id =" << result.planId
+                 << "state =" << result.state
+                 << "board =" << result.boardId
+                 << "motors =" << result.motorCount;
+    #endif
 
     // Main Board answered with 0x54, so timeout watchdog is no longer needed.
     if (m_interventionTimeoutTimer)
@@ -4042,9 +4106,11 @@ void MainWindow::setInterventionUiState(InterventionUiState state)
         break;
     }
 
-   // qDebug() << "[UI STATE]"
-    //         << "state =" << static_cast<int>(state)
-     //        << "text =" << statusText;
+    #if TALMA_DEBUG_INTERVENTION
+    qDebug() << "[UI STATE]"
+             << "state =" << static_cast<int>(state)
+             << "text =" << statusText;
+    #endif
 
     if (m_lblInterventionStatus)
         m_lblInterventionStatus->setText(statusText);
@@ -4057,8 +4123,10 @@ void MainWindow::setInterventionUiState(InterventionUiState state)
             "}"
             ).arg(statusColor));
 
-   // qDebug() << "[UI STATE] Intervention state changed to"
-      //       << static_cast<int>(state);
+    #if TALMA_DEBUG_INTERVENTION
+        qDebug() << "[UI STATE] Intervention state changed to"
+                 << static_cast<int>(state);
+    #endif
 }
 /*========================================================================================*/
 

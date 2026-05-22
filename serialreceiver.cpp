@@ -1,4 +1,5 @@
 #include "serialreceiver.h"
+#include "talma_debug.h"
 #include <QDebug>
 
 /*========================================================================================*/
@@ -85,7 +86,9 @@ void SerialReceiver::processInterventionPlanFastPath(const QByteArray &rx)
     if (!planRxMonitorBuffer.contains(expectedPlan))
         return;
 
-    qDebug() << "[UART FAST-PATH] TEST INTERVENTION_PLAN detected";
+    #if TALMA_DEBUG_UART
+        qDebug() << "[UART FAST-PATH] TEST INTERVENTION_PLAN detected";
+    #endif
 
     InterventionPlan plan;
     plan.planId = 1;
@@ -147,15 +150,95 @@ void SerialReceiver::processInterventionResultFastPath(const QByteArray &rx)
     result.boardId = (quint8)pkt[9];
     result.motorCount = (quint8)pkt[10];
 
-    qDebug() << "[UART FAST-PATH] INTERVENTION_RESULT"
-             << "plan_id =" << result.planId
-             << "state =" << result.state
-             << "board =" << result.boardId
-             << "motors =" << result.motorCount;
+    #if TALMA_DEBUG_UART
+        qDebug() << "[UART FAST-PATH] INTERVENTION_RESULT"
+                 << "plan_id =" << result.planId
+                 << "state =" << result.state
+                 << "board =" << result.boardId
+                 << "motors =" << result.motorCount;
+    #endif
 
     emit interventionResultReceived(result);
 
     resultRxMonitorBuffer.remove(0, resultIdx + RESULT_LEN);
+}
+
+/*========================================================================================*/
+
+// ======================================================
+// UART Packet Statistics
+//
+// Tracks:
+// - received packet count per TYPE
+// - SEQ jumps / possible missed packets
+// - time gap between packets of same TYPE
+//
+// This function is called only after successful parsing.
+// ======================================================
+void SerialReceiver::updatePacketStats(quint8 type, quint8 seq, quint16 frameId)
+{
+    if (!m_rxStatsClock.isValid())
+        m_rxStatsClock.start();
+
+    const qint64 nowMs = m_rxStatsClock.elapsed();
+
+    PacketStats &stats = m_packetStats[type];
+
+    if (!stats.initialized) {
+        stats.initialized = true;
+        stats.lastSeq = seq;
+        stats.rxCount = 1;
+        stats.lastRxMs = nowMs;
+
+        #if TALMA_DEBUG_SERIAL_STATS
+                qDebug() << "[SERIAL STATS INIT]"
+                         << "type =" << QString("0x%1")
+                                            .arg(type, 2, 16, QLatin1Char('0'))
+                                            .toUpper()
+                         << "seq =" << seq
+                         << "frame =" << frameId;
+        #endif
+
+        return;
+    }
+
+   /* const quint8 expectedSeq = quint8(stats.lastSeq + 1);
+
+    if (seq != expectedSeq) {
+        const quint8 missed = quint8(seq - expectedSeq);
+
+        stats.missedCount += missed;
+
+        qWarning() << "[SERIAL SEQ JUMP]"
+                   << "type =" << QString("0x%1").arg(type, 2, 16, QLatin1Char('0')).toUpper()
+                   << "expected =" << expectedSeq
+                   << "got =" << seq
+                   << "missed =" << missed
+                   << "totalMissed =" << stats.missedCount
+                   << "frame =" << frameId;
+    }*/
+
+    const qint64 gapMs = nowMs - stats.lastRxMs;
+
+    if (gapMs > stats.maxGapMs)
+        stats.maxGapMs = gapMs;
+
+    // Log only abnormal delay to keep terminal clean.
+    if (gapMs > 1500) {
+        #if TALMA_DEBUG_SERIAL_STATS
+                qWarning() << "[SERIAL GAP]"
+                           << "type =" << QString("0x%1")
+                                              .arg(type, 2, 16, QLatin1Char('0'))
+                                              .toUpper()
+                           << "gapMs =" << gapMs
+                           << "maxGapMs =" << stats.maxGapMs
+                           << "frame =" << frameId;
+        #endif
+    }
+
+    stats.lastSeq = seq;
+    stats.rxCount++;
+    stats.lastRxMs = nowMs;
 }
 /*========================================================================================*/
 
@@ -243,11 +326,17 @@ void SerialReceiver::processBuffer()
             }
 
             m_buf.remove(0, BED_PKT_LEN);
+
+            updatePacketStats(TYPE_BED_SNAPSHOT, pkt.seq, pkt.frameId);
+
             emit bedSnapshotReceived(pkt);
 
-            qDebug() << "[RX OK] BED_SNAPSHOT"
-                     << "frame =" << pkt.frameId
-                     << "seq =" << pkt.seq;
+            #if TALMA_DEBUG_UART
+                qDebug() << "[RX OK] BED_SNAPSHOT"
+                         << "frame =" << pkt.frameId
+                         << "seq =" << pkt.seq;
+            #endif
+
         }
         // ---------------- BED STATUS (0x22) ----------------
         else if (type == TYPE_BED_STATUS) {
@@ -264,11 +353,16 @@ void SerialReceiver::processBuffer()
             }
 
             m_buf.remove(0, BED_PKT_LEN);
+
+            updatePacketStats(TYPE_BED_STATUS, pkt.seq, pkt.frameId);
+
             emit bedStatusReceived(pkt);
 
-            qDebug() << "[RX OK] BED_STATUS"
-                     << "frame =" << pkt.frameId
-                     << "seq =" << pkt.seq;
+            #if TALMA_DEBUG_UART
+                qDebug() << "[RX OK] BED_STATUS"
+                         << "frame =" << pkt.frameId
+                         << "seq =" << pkt.seq;
+            #endif
         }
         // ---------------- NODE HEALTH (0x30) ----------------
         else if (type == TYPE_NODE_HEALTH) {
@@ -286,6 +380,8 @@ void SerialReceiver::processBuffer()
 
             // توجه:
             // tryParseNodeHealth خودش packet را از buffer حذف می‌کند
+            updatePacketStats(TYPE_NODE_HEALTH, nh.seq, nh.frameId);
+
             emit nodeHealthReceived(nh);
         }
         // ---------------- SUMMARY (0x40) ----------------
@@ -302,15 +398,27 @@ void SerialReceiver::processBuffer()
                 continue;
             }
 
+            // Save SEQ before removing packet from buffer.
+            const quint8 seq = quint8(m_buf[3]);
+
             m_buf.remove(0, SUMMARY_LEN);
+
+            updatePacketStats(TYPE_SUMMARY, seq, summary.frameId);
+
+            emit summaryReceived(summary);
+
+
            /* qDebug() << "SUMMARY parsed:"
                      << "frameId =" << summary.frameId
                      << "risk =" << summary.riskScore
                      << "movement =" << summary.timeSinceLastMovementS;*/
-            emit summaryReceived(summary);
 
+
+            #if TALMA_DEBUG_UART
             qDebug() << "[RX OK] SUMMARY"
                      << "frame =" << summary.frameId;
+            #endif
+
         }
         // ---------------- INTERVENTION PLAN (0x51) ----------------
         else if (type == TYPE_INTERVENTION_PLAN) {
