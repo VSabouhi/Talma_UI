@@ -88,7 +88,21 @@ void HeatmapWidget::onBedFrameUpdated(quint16 frameId)
     Q_UNUSED(frameId);
 
     // چون کل فریم تخت عوض شده، کل widget را redraw می‌کنیم
-    update();
+    //update();
+
+    // ======================================================
+    // Repaint throttle.
+    //
+    // Limit QWidget repaint rate to ~15 FPS.
+    // Serial/data processing still runs at full speed.
+    // ======================================================
+    if (!m_repaintLimiter.isValid())
+        m_repaintLimiter.start();
+
+    if (m_repaintLimiter.elapsed() >= 33) {
+        update();
+        m_repaintLimiter.restart();
+    }
 }
 /*========================================================================================*/
 
@@ -166,7 +180,9 @@ void HeatmapWidget::paintEvent(QPaintEvent *event)
     Q_UNUSED(event);
 
     QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing, true);
+    // Performance:
+    // Disable antialiasing during live heatmap rendering.
+    painter.setRenderHint(QPainter::Antialiasing, false);
 
     // Background
     QLinearGradient bg(0, 0, 0, height());

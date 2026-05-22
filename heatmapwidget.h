@@ -7,6 +7,7 @@
 #include "bodyzones.h"   // NEW: برای تخمین زون‌های adaptive از روی body bounds
 #include "bodyzoneanalyzer.h"   // NEW: محاسبه reusable آمار zoneها
 #include <QRect>
+#include <QElapsedTimer>
 
 class SensorStore;
 
@@ -72,4 +73,14 @@ private:
     bool m_showZoneValues = false;   // NEW: نمایش مقادیر عددی zoneها روی خود heatmap
     QRect m_highlightedZoneRect;      // NEW: zone انتخاب‌شده برای highlight
     bool m_hasHighlightedZone = false; // NEW: آیا highlight فعال است؟
+    // ======================================================
+    // Repaint throttle timer.
+    //
+    // Limits QWidget repaint frequency during
+    // high-frequency live updates.
+    // ======================================================
+    QElapsedTimer m_repaintLimiter;
+
+
+
 };

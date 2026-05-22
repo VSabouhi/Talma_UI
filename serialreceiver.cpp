@@ -38,21 +38,42 @@ void SerialReceiver::detach()
 }
 /*========================================================================================*/
 
-/*void SerialReceiver::onReadyRead()
+void SerialReceiver::onReadyRead()
 {
     if (!m_port)
         return;
 
-    QByteArray rx = m_port->readAll();
+    const QByteArray rx = m_port->readAll();
 
     if (rx.isEmpty())
         return;
 
     // ======================================================
-    // TEMP TEST:
-    // Raw UART monitor for fake INTERVENTION_PLAN packet.
+    // TEMP FAST-PATH:
+    // Critical intervention events are checked before normal
+    // parser processing to avoid delay behind large packets.
     // ======================================================
+    processInterventionPlanFastPath(rx);
+    processInterventionResultFastPath(rx);
+
+    // ======================================================
+    // Normal parser path
+    // ======================================================
+    m_buf.append(rx);
+    processBuffer();
+}
+/*========================================================================================*/
+
+// ======================================================
+// TEMP FAST-PATH:
+// Detect exact fake INTERVENTION_PLAN packet directly
+// from raw UART stream.
+// ======================================================
+void SerialReceiver::processInterventionPlanFastPath(const QByteArray &rx)
+{
+
     static QByteArray planRxMonitorBuffer;
+
     planRxMonitorBuffer.append(rx);
 
     if (planRxMonitorBuffer.size() > 256)
@@ -61,161 +82,80 @@ void SerialReceiver::detach()
     const QByteArray expectedPlan =
         QByteArray::fromHex("AA555100010002030C800301021234");
 
-    if (planRxMonitorBuffer.contains(expectedPlan)) {
-        qDebug() << "[UART MONITOR] TEST INTERVENTION_PLAN RECEIVED OK";
+    if (!planRxMonitorBuffer.contains(expectedPlan))
+        return;
 
-        InterventionPlan plan;
-        plan.planId = 1;
-        plan.boardId = 2;
-        plan.targetZone = 3;
-        plan.motorCount = 12;
-        plan.riskScore = 128;
-        plan.riskLevel = 3;
-        plan.recommendationCode = 1;
-        plan.reasonCode = 2;
+    qDebug() << "[UART FAST-PATH] TEST INTERVENTION_PLAN detected";
 
-        emit interventionPlanReceived(plan);
+    InterventionPlan plan;
+    plan.planId = 1;
+    plan.boardId = 2;
+    plan.targetZone = 3;
+    plan.motorCount = 12;
+    plan.riskScore = 128;
+    plan.riskLevel = 3;
+    plan.recommendationCode = 1;
+    plan.reasonCode = 2;
 
-        planRxMonitorBuffer.clear();
-    }
+    emit interventionPlanReceived(plan);
 
-    // ======================================================
-    // TEMP TEST:
-    // Raw UART monitor for INTERVENTION_RESULT packet.
-    //
-    // Checks whether Main sends TYPE = 0x54 after approve.
-    // ======================================================
+    planRxMonitorBuffer.clear();
+}
+
+/*========================================================================================*/
+
+// ======================================================
+// TEMP FAST-PATH:
+// Detect and decode INTERVENTION_RESULT packets directly
+// from raw UART stream.
+// ======================================================
+void SerialReceiver::processInterventionResultFastPath(const QByteArray &rx)
+{
+
     static QByteArray resultRxMonitorBuffer;
+
     resultRxMonitorBuffer.append(rx);
 
     if (resultRxMonitorBuffer.size() > 256)
         resultRxMonitorBuffer.remove(0, resultRxMonitorBuffer.size() - 256);
 
-    if (resultRxMonitorBuffer.contains(QByteArray::fromHex("AA5554"))) {
-        qDebug() << "[UART MONITOR] INTERVENTION_RESULT RAW DETECTED buffer ="
-                 << resultRxMonitorBuffer.toHex(' ');
-        resultRxMonitorBuffer.clear();
-    }
+    const int resultIdx =
+        resultRxMonitorBuffer.indexOf(QByteArray::fromHex("AA5554"));
 
-    m_buf.append(rx);
-    processBuffer();
-}*/
-
-
-void SerialReceiver::onReadyRead()
-{
-    if (!m_port)
+    if (resultIdx < 0)
         return;
 
-    QByteArray rx = m_port->readAll();
+    static constexpr int RESULT_LEN = 13;
 
-    if (rx.isEmpty())
+    if (resultRxMonitorBuffer.size() < resultIdx + RESULT_LEN)
         return;
 
-    // ======================================================
-    // TEMP FAST-PATH:
-    // Detect exact fake INTERVENTION_PLAN packet directly
-    // from raw UART stream.
-    //
-    // This avoids delays caused by large 0x20 / 0x22 packets.
-    // ======================================================
-    static QByteArray planRxMonitorBuffer;
+    const QByteArray pkt = resultRxMonitorBuffer.mid(resultIdx, RESULT_LEN);
 
-    planRxMonitorBuffer.append(rx);
+    if ((quint8)pkt[11] != 0x12 || (quint8)pkt[12] != 0x34)
+        return;
 
-    if (planRxMonitorBuffer.size() > 256)
-        planRxMonitorBuffer.remove(0,
-                                   planRxMonitorBuffer.size() - 256);
+    InterventionResult result;
 
-    const QByteArray expectedPlan =
-        QByteArray::fromHex("AA555100010002030C800301021234");
+    result.planId =
+        quint32((quint8)pkt[4]) |
+        (quint32((quint8)pkt[5]) << 8) |
+        (quint32((quint8)pkt[6]) << 16) |
+        (quint32((quint8)pkt[7]) << 24);
 
-    if (planRxMonitorBuffer.contains(expectedPlan)) {
+    result.state = (quint8)pkt[8];
+    result.boardId = (quint8)pkt[9];
+    result.motorCount = (quint8)pkt[10];
 
-        qDebug() << "[UART FAST-PATH] TEST INTERVENTION_PLAN detected";
+    qDebug() << "[UART FAST-PATH] INTERVENTION_RESULT"
+             << "plan_id =" << result.planId
+             << "state =" << result.state
+             << "board =" << result.boardId
+             << "motors =" << result.motorCount;
 
-        InterventionPlan plan;
+    emit interventionResultReceived(result);
 
-        plan.planId = 1;
-        plan.boardId = 2;
-        plan.targetZone = 3;
-        plan.motorCount = 12;
-        plan.riskScore = 128;
-        plan.riskLevel = 3;
-        plan.recommendationCode = 1;
-        plan.reasonCode = 2;
-
-        emit interventionPlanReceived(plan);
-
-        planRxMonitorBuffer.clear();
-    }
-
-    // ======================================================
-    // TEMP FAST-PATH:
-    // Detect and decode INTERVENTION_RESULT packets directly
-    // from raw UART stream.
-    //
-    // Packet:
-    // AA 55 54 ...
-    //
-    // This avoids delays when 0x54 arrives behind large
-    // BED packets.
-    // ======================================================
-    static QByteArray resultRxMonitorBuffer;
-
-    resultRxMonitorBuffer.append(rx);
-
-    if (resultRxMonitorBuffer.size() > 256)
-        resultRxMonitorBuffer.remove(0,
-                                     resultRxMonitorBuffer.size() - 256);
-
-    int resultIdx =
-        resultRxMonitorBuffer.indexOf(
-            QByteArray::fromHex("AA5554"));
-
-    // Full RESULT packet length = 13 bytes
-    if (resultIdx >= 0 &&
-        resultRxMonitorBuffer.size() >= resultIdx + 13)
-    {
-        QByteArray pkt =
-            resultRxMonitorBuffer.mid(resultIdx, 13);
-
-        // Footer check
-        if ((quint8)pkt[11] == 0x12 &&
-            (quint8)pkt[12] == 0x34)
-        {
-            InterventionResult result;
-
-            result.planId =
-                quint32((quint8)pkt[4]) |
-                (quint32((quint8)pkt[5]) << 8) |
-                (quint32((quint8)pkt[6]) << 16) |
-                (quint32((quint8)pkt[7]) << 24);
-
-            result.state = (quint8)pkt[8];
-            result.boardId = (quint8)pkt[9];
-            result.motorCount = (quint8)pkt[10];
-
-            qDebug() << "[UART FAST-PATH] INTERVENTION_RESULT"
-                     << "plan_id =" << result.planId
-                     << "state =" << result.state
-                     << "board =" << result.boardId
-                     << "motors =" << result.motorCount;
-
-            emit interventionResultReceived(result);
-
-            // Remove parsed packet from temp monitor buffer
-            resultRxMonitorBuffer.remove(0,
-                                         resultIdx + 13);
-        }
-    }
-
-    // ======================================================
-    // Normal parser path
-    // ======================================================
-    m_buf.append(rx);
-
-    processBuffer();
+    resultRxMonitorBuffer.remove(0, resultIdx + RESULT_LEN);
 }
 /*========================================================================================*/
 
@@ -304,6 +244,10 @@ void SerialReceiver::processBuffer()
 
             m_buf.remove(0, BED_PKT_LEN);
             emit bedSnapshotReceived(pkt);
+
+            qDebug() << "[RX OK] BED_SNAPSHOT"
+                     << "frame =" << pkt.frameId
+                     << "seq =" << pkt.seq;
         }
         // ---------------- BED STATUS (0x22) ----------------
         else if (type == TYPE_BED_STATUS) {
@@ -321,6 +265,10 @@ void SerialReceiver::processBuffer()
 
             m_buf.remove(0, BED_PKT_LEN);
             emit bedStatusReceived(pkt);
+
+            qDebug() << "[RX OK] BED_STATUS"
+                     << "frame =" << pkt.frameId
+                     << "seq =" << pkt.seq;
         }
         // ---------------- NODE HEALTH (0x30) ----------------
         else if (type == TYPE_NODE_HEALTH) {
@@ -360,6 +308,9 @@ void SerialReceiver::processBuffer()
                      << "risk =" << summary.riskScore
                      << "movement =" << summary.timeSinceLastMovementS;*/
             emit summaryReceived(summary);
+
+            qDebug() << "[RX OK] SUMMARY"
+                     << "frame =" << summary.frameId;
         }
         // ---------------- INTERVENTION PLAN (0x51) ----------------
         else if (type == TYPE_INTERVENTION_PLAN) {

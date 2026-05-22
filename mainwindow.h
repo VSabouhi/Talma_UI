@@ -18,6 +18,7 @@
 #include <QVBoxLayout>
 #include <QRect>
 #include <QEvent>
+#include <QElapsedTimer>
 
 #include <QtCharts>
 #include <QChartView>
@@ -104,6 +105,14 @@ private:
     QWidget *m_tabAnalytics = nullptr;          // تب مستقل Analytics
     QWidget *m_analyticsContentHost = nullptr;  // کانتینر اصلی محتوای Analytics
     QLabel *m_lblAnalyticsTitle = nullptr;      // عنوان صفحه Analytics
+    // ======================================================
+    // Rebuild Analytics charts from stored history.
+    //
+    // Used when user opens Analytics tab.
+    // Data is collected continuously in m_trendHistory,
+    // but charts are repainted only when Analytics is visible.
+    // ======================================================
+    void rebuildAnalyticsChartsFromHistory();
 
     // ===== Analytics Clinical Summary =====
     QWidget *m_analyticsSummaryRow = nullptr;          // ردیف summary بالای نمودارها
@@ -131,6 +140,14 @@ private:
     QRect m_dbgSacrumRect;
     QRect m_dbgLeftHeelRect;
     QRect m_dbgRightHeelRect;
+
+    // ======================================================
+    // Repaint throttling.
+    //
+    // Prevents excessive QWidget repaint storms during
+    // high-frequency serial streaming.
+    // ======================================================
+    QElapsedTimer m_repaintLimiter;
 
     // ======================================================
     // Main Board Debug Console
@@ -247,6 +264,38 @@ private:
     quint16 m_pendingInterventionPlanId = 0;
     bool m_hasPendingIntervention = false;
 
+
+    // ======================================================
+    // Intervention UI State
+    //
+    // Keeps UI behavior deterministic and prevents
+    // duplicate approve/reject actions.
+    //
+    // This is UI-side state only.
+    // Main Board remains source of truth for execution.
+    // ======================================================
+    enum class InterventionUiState
+    {
+        Idle,
+        PendingApproval,
+        WaitingResult,
+        Executing,
+        Completed,
+        Failed,
+        Rejected,
+        Timeout
+    };
+
+    InterventionUiState m_interventionState = InterventionUiState::Idle;
+
+    // ======================================================
+    // Timeout watchdog for intervention lifecycle.
+    //
+    // If Main Board does not answer with TYPE 0x54
+    // within timeout window, UI moves to Timeout state.
+    // ======================================================
+    QTimer *m_interventionTimeoutTimer = nullptr;
+
     /* ====================== Alert Blink State ====================== */
     QTimer *m_alertBlinkTimer = nullptr;   // تایمر blink برای alertهای critical
     bool m_alertBlinkOn = true;            // وضعیت فعلی روشن/خاموش blink
@@ -331,6 +380,12 @@ private slots:
     // intervention workflow.
     // ======================================================
     void onInterventionPlanReceived(const InterventionPlan &plan);
+
+    // ======================================================
+    // Updates intervention card according to UI state.
+    // Keeps label/button behavior centralized.
+    // ======================================================
+    void setInterventionUiState(InterventionUiState state);
     // ======================================================
     // Main Board -> UI
     // Called when SerialReceiver decodes TYPE 0x54

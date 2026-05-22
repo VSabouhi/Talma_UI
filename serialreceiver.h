@@ -232,6 +232,25 @@ private:
     // ======================================================
     bool tryParseInterventionResult(InterventionResult &out);
 
+    // ======================================================
+    // TEMP FAST-PATH handlers.
+    //
+    // These detect critical intervention packets directly
+    // from raw UART bytes before normal parser processing.
+    //
+    // Reason:
+    // Current UART carries both large data packets and small
+    // command/event packets. Fast-path prevents intervention
+    // events from being delayed behind large 0x20 / 0x22 frames.
+    //
+    // TODO:
+    // Remove after command/data channels are separated or
+    // protocol gets LEN + robust framing.
+    // ======================================================
+    void processInterventionPlanFastPath(const QByteArray &rx);
+    void processInterventionResultFastPath(const QByteArray &rx);
+
+
     QSerialPort *m_port = nullptr;
     QByteArray m_buf;
 

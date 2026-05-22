@@ -562,7 +562,7 @@ MainWindow::MainWindow(QWidget *parent)
         m_chkShowBodyZones = new QCheckBox("Show body zones", grpVisualDebug);
         m_chkShowZoneValues = new QCheckBox("Show zone values", grpVisualDebug);
 
-        m_chkShowDebugText->setChecked(true);
+        m_chkShowDebugText->setChecked(false);
         m_chkShowTooltip->setChecked(true);
         m_chkShowBodyBounds->setChecked(false);
         m_chkShowBodyZones->setChecked(false);
@@ -670,12 +670,12 @@ MainWindow::MainWindow(QWidget *parent)
             );
         grid->addWidget(m_lblDbgPlaceholder, 3, 1);
 
-        debugDataLayout->addLayout(grid);
+       /* debugDataLayout->addLayout(grid);
         debugDataLayout->addWidget(m_lblDbgSource);
         debugDataLayout->addWidget(m_lblDbgBody);
         debugDataLayout->addWidget(m_lblDbgSacrum);
         debugDataLayout->addWidget(m_lblDbgHeelLeft);
-        debugDataLayout->addWidget(m_lblDbgHeelRight);
+        debugDataLayout->addWidget(m_lblDbgHeelRight);*/
 
         // ================= LAYOUT =================
         QHBoxLayout *topDebugRow = new QHBoxLayout();
@@ -1381,7 +1381,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_heatmap->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_heatmap->setStore(&m_store);
     m_heatmap->setBedStore(&m_bedStore);
-    m_heatmap->setShowDebugText(true);
+    m_heatmap->setShowDebugText(false);
     m_heatmap->setShowTooltip(true);
     m_heatmap->setShowBodyZones(false);
     m_heatmap->setShowZoneValues(false);
@@ -1582,6 +1582,9 @@ MainWindow::MainWindow(QWidget *parent)
     m_lblInterventionMotorCount->setStyleSheet(interventionLabelStyle);
     m_lblInterventionStatus->setStyleSheet(interventionLabelStyle);
 
+    m_lblInterventionStatus->setMinimumHeight(36);
+    m_lblInterventionStatus->setWordWrap(true);
+
     interventionLay->addWidget(m_lblInterventionPlanId);
     interventionLay->addWidget(m_lblInterventionTargetZone);
     interventionLay->addWidget(m_lblInterventionRisk);
@@ -1638,6 +1641,28 @@ MainWindow::MainWindow(QWidget *parent)
     // Start hidden until a valid 0x51 plan arrives
     m_grpInterventionCard->setVisible(false);
 
+    // ======================================================
+    // Intervention timeout watchdog.
+    //
+    // If Main Board does not answer with TYPE 0x54,
+    // UI enters Timeout state.
+    // ======================================================
+    m_interventionTimeoutTimer = new QTimer(this);
+
+    m_interventionTimeoutTimer->setSingleShot(true);
+
+    connect(m_interventionTimeoutTimer,
+            &QTimer::timeout,
+            this,
+            [this]()
+            {
+                qWarning() << "[INTERVENTION] Timeout waiting for Main Board result";
+
+                setInterventionUiState(InterventionUiState::Timeout);
+
+                m_hasPendingIntervention = false;
+            });
+
     rightLayout->addWidget(m_grpInterventionCard);
     rightLayout->addStretch(1);
 
@@ -1678,14 +1703,12 @@ MainWindow::MainWindow(QWidget *parent)
 
                 m_rx.sendInterventionApprove(m_pendingInterventionPlanId);
 
-                if (m_lblInterventionStatus)
-                    m_lblInterventionStatus->setText("Status: Approve sent, waiting for Main...");
+                setInterventionUiState(InterventionUiState::WaitingResult);
 
-                if (m_btnApproveIntervention)
-                    m_btnApproveIntervention->setEnabled(false);
-
-                if (m_btnRejectIntervention)
-                    m_btnRejectIntervention->setEnabled(false);
+                // Start timeout watchdog after sending approve.
+                // If Main Board does not send 0x54 result, UI enters Timeout.
+                if (m_interventionTimeoutTimer)
+                    m_interventionTimeoutTimer->start(8000);
 
                 if (m_lblDbgLastTx)
                     m_lblDbgLastTx->setText(
@@ -1725,14 +1748,11 @@ MainWindow::MainWindow(QWidget *parent)
 
                 m_rx.sendInterventionReject(m_pendingInterventionPlanId);
 
-                if (m_lblInterventionStatus)
-                    m_lblInterventionStatus->setText("Status: Reject sent, waiting for Main...");
-
-                if (m_btnApproveIntervention)
-                    m_btnApproveIntervention->setEnabled(false);
-
-                if (m_btnRejectIntervention)
-                    m_btnRejectIntervention->setEnabled(false);
+                setInterventionUiState(InterventionUiState::WaitingResult);
+                // Start timeout watchdog after sending reject.
+                // If Main Board does not send 0x54 result, UI enters Timeout.
+                if (m_interventionTimeoutTimer)
+                    m_interventionTimeoutTimer->start(8000);
 
                 if (m_lblDbgLastTx)
                     m_lblDbgLastTx->setText(
@@ -1825,6 +1845,23 @@ MainWindow::MainWindow(QWidget *parent)
 
         updateTableNode(m_selectedNode);
     });
+
+    // ======================================================
+    // Analytics tab activation.
+    //
+    // Data is collected continuously in m_trendHistory.
+    // Charts are rebuilt only when Analytics tab becomes visible.
+    // ======================================================
+    connect(ui->tabs, &QTabWidget::currentChanged,
+            this,
+            [this](int)
+            {
+                if (ui->tabs->currentWidget() != m_tabAnalytics)
+                    return;
+
+                rebuildAnalyticsChartsFromHistory();
+            });
+
 
     connect(&m_store, &SensorStore::nodeUpdated,
             this, &MainWindow::updateTableNode);
@@ -2537,8 +2574,12 @@ void MainWindow::onSummaryReceived(const SummaryData &summary)
     if (m_riskTrendSeries && m_riskTrendChartView)
         updateMiniRiskTrendChart();
 
-// ====================== Analytics Charts Update ======================
-{
+    // ====================== Analytics Charts Update ======================
+    // Performance:
+    // Keep collecting history always,
+    // but repaint/update charts only when Analytics tab is visible.
+    if (ui->tabs->currentWidget() == m_tabAnalytics)
+    {
     static int x = 0;
 
     // --------------------------------------------------------
@@ -2625,17 +2666,90 @@ void MainWindow::onSummaryReceived(const SummaryData &summary)
     x++;
 }
 
-    qDebug() << "[SUMMARY]"
+    /*qDebug() << "[SUMMARY]"
              << "uptime=" << summary.uptimeS
              << "risk=" << summary.riskScore
              << "sacrumExp=" << summary.sacrumExposureS
              << "heelsExp=" << summary.heelsExposureS
              << "threshold=" << summary.pressureExposureThreshold;
 
-    qDebug() << "[TrendHistory] size =" << m_trendHistory.size();
+    qDebug() << "[TrendHistory] size =" << m_trendHistory.size();*/
 
 }
 
+
+/*========================================================================================*/
+
+// ======================================================
+// Rebuild Analytics charts from stored TrendHistory.
+//
+// Data collection is continuous even when Analytics tab
+// is not visible. This function redraws charts when user
+// opens Analytics tab.
+// ======================================================
+void MainWindow::rebuildAnalyticsChartsFromHistory()
+{
+    if (!m_seriesRisk || !m_seriesSacrum || !m_seriesHeel ||
+        !m_seriesShoulders || !m_seriesExposure) {
+        return;
+    }
+
+    m_seriesRisk->clear();
+    m_seriesSacrum->clear();
+    m_seriesHeel->clear();
+    m_seriesShoulders->clear();
+
+    const auto &samples = m_trendHistory.samples();
+
+    int x = 0;
+    for (const auto &s : samples) {
+        m_seriesRisk->append(x, s.riskScore);
+
+        m_seriesSacrum->append(x, 63 - s.sacrumAvg);
+        m_seriesHeel->append(x, 63 - s.heelLeftAvg);
+        m_seriesShoulders->append(x, 63 - s.shouldersAvg);
+
+        ++x;
+    }
+
+    if (!samples.isEmpty()) {
+        const auto &last = samples.last();
+
+        const auto sets = m_seriesExposure->barSets();
+        if (sets.size() >= 3) {
+            sets[0]->replace(0, last.sacrumExposureS / 60.0);
+            sets[1]->replace(0, last.heelsExposureS / 60.0);
+            sets[2]->replace(0, last.shouldersExposureS / 60.0);
+        }
+    }
+
+    const int maxX = qMax(60, x);
+    const int minX = (x > 60) ? (x - 60) : 0;
+
+    if (m_chartRiskView && m_chartRiskView->chart()) {
+        const auto axes = m_chartRiskView->chart()->axes(Qt::Horizontal);
+        if (!axes.isEmpty()) {
+            if (auto axis = qobject_cast<QValueAxis*>(axes.first()))
+                axis->setRange(minX, maxX);
+        }
+
+        if (m_seriesRiskThreshold) {
+            m_seriesRiskThreshold->clear();
+            m_seriesRiskThreshold->append(minX, 70);
+            m_seriesRiskThreshold->append(maxX, 70);
+        }
+    }
+
+    if (m_chartZonesView && m_chartZonesView->chart()) {
+        const auto axes = m_chartZonesView->chart()->axes(Qt::Horizontal);
+        if (!axes.isEmpty()) {
+            if (auto axis = qobject_cast<QValueAxis*>(axes.first()))
+                axis->setRange(minX, maxX);
+        }
+    }
+
+    qDebug() << "[ANALYTICS] charts rebuilt from history, samples =" << samples.size();
+}
 /*========================================================================================*/
 
 // ====================== Dashboard Rendering (Polished) ======================
@@ -3154,7 +3268,8 @@ void MainWindow::renderSummaryToDashboard(const SummaryData &summary)
     // 🔴 Rule 1: High sacrum exposure
     if (sacrumExpMin >= 10)
     {
-        alertText = QString("🔴 SACRUM OVERLOAD\n%1 min exposure").arg(sacrumExpMin);
+        alertText = QString("[CRITICAL] SACRUM OVERLOAD\n%1 min exposure")
+        .arg(sacrumExpMin);
         alertColor = "#E74C3C";
     }
     else if (noMoveMin >= 8) {
@@ -3181,10 +3296,33 @@ void MainWindow::renderSummaryToDashboard(const SummaryData &summary)
     // --------------------------------------------------------
     // Apply Alert Text + Visual Style + Blink
     // --------------------------------------------------------
+
+    // ======================================================
+    // TEMP ALERT LOGIC
+    //
+    // Current Main Board test stream does not yet provide
+    // realistic alertActive/riskLevel escalation.
+    // Use riskScore directly for UI alert testing.
+    // ======================================================
+    if (summary.riskScore >= 40) {
+        alertText = QString("HIGH PRESSURE RISK (%1)")
+        .arg(summary.riskScore);
+
+        alertColor = "#F39C12";   // Orange warning
+    }
+
     m_lblAlerts->setText(alertText);
 
+    qDebug() << "[ALERT CHECK]"
+             << "alertText =" << alertText
+             << "risk =" << summary.riskScore
+             << "riskLevel =" << summary.riskLevel
+             << "sacrumExpMin =" << sacrumExpMin
+             << "noMoveMin =" << noMoveMin
+             << "deviceAlert =" << summary.alertActive
+             << "severity =" << summary.alertSeverity;
+
     QString alertStyle;
-    //const bool isCriticalAlert = (summary.alertSeverity >= 2 || summary.riskLevel == 2);
 
     const bool isCriticalAlert =
         (summary.alertSeverity >= 2) ||
@@ -3636,8 +3774,8 @@ void MainWindow::onNodeHealth(const NodeHealthPacket &pkt)
     m_frameSync.nodeHealthFrameId = pkt.frameId;
     m_frameSync.hasNodeHealth = true;
 
-    qDebug() << "NODE_HEALTH applied, frameId =" << pkt.frameId
-             << "nodeCount =" << pkt.nodeCount;
+   // qDebug() << "NODE_HEALTH applied, frameId =" << pkt.frameId
+    //         << "nodeCount =" << pkt.nodeCount;
 }
 
 /*========================================================================================*/
@@ -3730,22 +3868,13 @@ void MainWindow::onInterventionPlanReceived(const InterventionPlan &plan)
         m_lblInterventionMotorCount->setText(
             QString("Motor Count: %1").arg(plan.motorCount));
     }
-
-    if (m_lblInterventionStatus) {
-        m_lblInterventionStatus->setText(
-            "Status: Waiting for approval");
-    }
-
-    // Enable user actions
-    if (m_btnApproveIntervention)
-        m_btnApproveIntervention->setEnabled(true);
-
-    if (m_btnRejectIntervention)
-        m_btnRejectIntervention->setEnabled(true);
-
-    // Reveal intervention card
+    // Reveal intervention card when a valid plan arrives.
+    // The card is hidden by default at startup.
     if (m_grpInterventionCard)
         m_grpInterventionCard->setVisible(true);
+
+    // A new valid plan is now pending for user approval.
+    setInterventionUiState(InterventionUiState::PendingApproval);
 
 }
 /*========================================================================================*/
@@ -3772,6 +3901,10 @@ void MainWindow::onInterventionResultReceived(const InterventionResult &result)
              << "board =" << result.boardId
              << "motors =" << result.motorCount;
 
+    // Main Board answered with 0x54, so timeout watchdog is no longer needed.
+    if (m_interventionTimeoutTimer)
+        m_interventionTimeoutTimer->stop();
+
     if (!m_hasPendingIntervention ||
         result.planId != m_pendingInterventionPlanId) {
 
@@ -3783,39 +3916,35 @@ void MainWindow::onInterventionResultReceived(const InterventionResult &result)
     }
 
     QString statusText;
+        switch (result.state)
+        {
+        case 0:
+            setInterventionUiState(InterventionUiState::Idle);
+            break;
 
-    switch (result.state)
-    {
-    case 0:
-        statusText = "Status: Idle";
-        break;
+        case 1:
+            setInterventionUiState(InterventionUiState::Executing);
+            break;
 
-    case 1:
-        statusText = "Status: Executing...";
-        break;
+        case 2:
+            m_hasPendingIntervention = false;
+            setInterventionUiState(InterventionUiState::Completed);
+            break;
 
-    case 2:
-        statusText = "Status: Completed";
-        m_hasPendingIntervention = false;
-        break;
+        case 3:
+            m_hasPendingIntervention = false;
+            setInterventionUiState(InterventionUiState::Failed);
+            break;
 
-    case 3:
-        statusText = "Status: Failed";
-        m_hasPendingIntervention = false;
-        break;
+        case 4:
+            m_hasPendingIntervention = false;
+            setInterventionUiState(InterventionUiState::Rejected);
+            break;
 
-    case 4:
-        statusText = "Status: Rejected";
-        m_hasPendingIntervention = false;
-        break;
-
-    default:
-        statusText = "Status: Unknown result";
-        break;
-    }
-
-    if (m_lblInterventionStatus)
-        m_lblInterventionStatus->setText(statusText);
+        default:
+            qWarning() << "[UI] Unknown intervention result state =" << result.state;
+            break;
+        }
 
     if (m_lblDbgLastRx) {
         m_lblDbgLastRx->setText(
@@ -3824,15 +3953,113 @@ void MainWindow::onInterventionResultReceived(const InterventionResult &result)
                 .arg(result.state));
     }
 
-    // Keep buttons disabled after execution starts or terminal state arrives.
-    if (m_btnApproveIntervention)
-        m_btnApproveIntervention->setEnabled(false);
-
-    if (m_btnRejectIntervention)
-        m_btnRejectIntervention->setEnabled(false);
 }
 /*========================================================================================*/
+/*========================================================================================*/
 
+// ======================================================
+// Centralized Intervention UI state handler.
+//
+// Keeps intervention card behavior deterministic.
+//
+// NOTE:
+// This is UI-side state only.
+// Main Board remains the execution source of truth.
+// ======================================================
+void MainWindow::setInterventionUiState(InterventionUiState state)
+{
+    m_interventionState = state;
+
+    QString statusText;
+    QString statusColor = "#95A5A6";
+
+
+    switch (state)
+    {
+    case InterventionUiState::Idle:
+        statusText = "Status: Idle";
+
+        if (m_btnApproveIntervention)
+            m_btnApproveIntervention->setEnabled(false);
+
+        if (m_btnRejectIntervention)
+            m_btnRejectIntervention->setEnabled(false);
+
+        break;
+
+    case InterventionUiState::PendingApproval:
+        statusText = "Status: Waiting for approval";
+        statusColor = "#F39C12";
+
+        if (m_btnApproveIntervention)
+            m_btnApproveIntervention->setEnabled(true);
+
+        if (m_btnRejectIntervention)
+            m_btnRejectIntervention->setEnabled(true);
+
+        break;
+
+    case InterventionUiState::WaitingResult:
+        statusText = "Status: Waiting for Main Board...";
+        statusColor = "#F1C40F";
+
+
+        if (m_btnApproveIntervention)
+            m_btnApproveIntervention->setEnabled(false);
+
+        if (m_btnRejectIntervention)
+            m_btnRejectIntervention->setEnabled(false);
+
+        break;
+
+    case InterventionUiState::Executing:
+        statusText = "Status: Executing...";
+        statusColor = "#3498DB";
+
+        break;
+
+    case InterventionUiState::Completed:
+        statusText = "Status: Completed";
+        statusColor = "#2ECC71";
+
+        break;
+
+    case InterventionUiState::Failed:
+        statusText = "Status: Failed";
+
+        break;
+
+    case InterventionUiState::Rejected:
+        statusText = "Status: Rejected";
+        statusColor = "#7F8C8D";
+
+        break;
+
+    case InterventionUiState::Timeout:
+        statusText = "Status: Timeout";
+        statusColor = "#E74C3C";
+
+        break;
+    }
+
+   // qDebug() << "[UI STATE]"
+    //         << "state =" << static_cast<int>(state)
+     //        << "text =" << statusText;
+
+    if (m_lblInterventionStatus)
+        m_lblInterventionStatus->setText(statusText);
+
+    m_lblInterventionStatus->setStyleSheet(
+        QString(
+            "QLabel {"
+            " color: %1;"
+            " font-weight: 700;"
+            "}"
+            ).arg(statusColor));
+
+   // qDebug() << "[UI STATE] Intervention state changed to"
+      //       << static_cast<int>(state);
+}
 /*========================================================================================*/
 
 /*========================================================================================*/
