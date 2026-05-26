@@ -1,4 +1,6 @@
 #include "bedframestore.h"
+#include <QDebug>
+
 
 // سازنده کلاس
 BedFrameStore::BedFrameStore(QObject *parent)
@@ -50,11 +52,34 @@ void BedFrameStore::setSnapshot(quint16 frameId, const quint8 *data, int count)
         }
     }
 
+    // ======================================================
+    // TEMP DEBUG PHASE 2:
+    // Dump raw snapshot matrix exactly as stored in BedFrameStore.
+    // This verifies whether corruption happens before rendering.
+    // ======================================================
+
+   /* qDebug() << "========== RAW SNAPSHOT ==========";
+
+    for (int r = 0; r < 32; ++r)
+    {
+        QString line;
+
+        for (int c = 0; c < 16; ++c)
+        {
+            line += QString("%1 ")
+            .arg(m_values[r][c], 3, 10, QChar('0'));
+        }
+
+        qDebug().noquote() << QString("R%1: ").arg(r, 2, 10, QChar('0')) + line;
+    }
+
+    qDebug() << "==================================";
+
     m_frameId = frameId;
     m_hasFrame = true;
 
     emit snapshotUpdated(frameId);
-    emit frameUpdated(frameId);
+    emit frameUpdated(frameId);*/
 }
 
 // ذخیره status تخت (packet 0x22)

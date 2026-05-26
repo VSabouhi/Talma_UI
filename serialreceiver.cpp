@@ -49,6 +49,53 @@ void SerialReceiver::onReadyRead()
     if (rx.isEmpty())
         return;
 
+
+    // ======================================================
+    // TEMP DEBUG PHASE 7:
+    // Monitor distances between packet headers in the raw UART
+    // stream before parser buffering. This reveals the actual
+    // packet length produced by the Main Board.
+    // ======================================================
+   /* static QByteArray rawMonitor;
+    rawMonitor.append(rx);
+
+    while (true) {
+        const int first = rawMonitor.indexOf(QByteArray::fromHex("AA55"));
+
+        if (first < 0) {
+            if (rawMonitor.size() > 1)
+                rawMonitor = rawMonitor.right(1);
+            break;
+        }
+
+        if (first > 0)
+            rawMonitor.remove(0, first);
+
+        const int second = rawMonitor.indexOf(QByteArray::fromHex("AA55"), 2);
+
+        if (second < 0) {
+            if (rawMonitor.size() > 2048)
+                rawMonitor.remove(0, rawMonitor.size() - 2048);
+            break;
+        }
+
+        const quint8 type = quint8(rawMonitor[2]);
+        const quint8 seq = quint8(rawMonitor[3]);
+
+        qWarning() << "[RAW PACKET DISTANCE]"
+                   << "type =" << QString("0x%1")
+                                      .arg(type, 2, 16, QLatin1Char('0'))
+                                      .toUpper()
+                   << "seq =" << seq
+                   << "distanceToNextSof =" << second
+                   << "footer =" << QString("0x%1 0x%2")
+                                        .arg(quint8(rawMonitor[second - 2]), 2, 16, QLatin1Char('0'))
+                                        .arg(quint8(rawMonitor[second - 1]), 2, 16, QLatin1Char('0'))
+                                        .toUpper();
+
+        rawMonitor.remove(0, second);
+    }*/
+
     // ======================================================
     // TEMP FAST-PATH:
     // Critical intervention events are checked before normal
@@ -318,9 +365,57 @@ void SerialReceiver::processBuffer()
             if (m_buf.size() < BED_PKT_LEN)
                 return;
 
+            // ======================================================
+            // TEMP DEBUG PHASE 3:
+            // Detect packet headers inside the expected BED_SNAPSHOT
+            // payload area. If 0xAA 0x55 appears before byte 520,
+            // the UI parser is consuming bytes from another packet as
+            // snapshot payload, or the expected packet length is wrong.
+            // ======================================================
+           /* for (int i = 8; i < 520; ++i) {
+                if (quint8(m_buf[i]) == SOF0 && quint8(m_buf[i + 1]) == SOF1) {
+                    qWarning() << "[BED_SNAPSHOT PAYLOAD SOF]"
+                               << "offset =" << i
+                               << "typeAfterSof =" << QString("0x%1")
+                                                          .arg(quint8(m_buf[i + 2]), 2, 16, QLatin1Char('0'))
+                                                          .toUpper()
+                               << "currentSeq =" << quint8(m_buf[3])
+                               << "currentFrame =" << (quint16(quint8(m_buf[4])) |
+                                                       (quint16(quint8(m_buf[5])) << 8));
+                }
+            }*/
+
+
             BedSnapshotPacket pkt;
             if (!tryParseBedSnapshot(pkt)) {
-                m_buf.remove(0, 1);
+                // ======================================================
+                // TEMP DEBUG PHASE 5:
+                // Fast resync after an invalid large BED_SNAPSHOT packet.
+                // If the parser locked onto a false AA 55 20 sequence,
+                // dropping only one byte is too slow and may keep the UI
+                // inside corrupted 522-byte windows.
+                // ======================================================
+                int nextSof = -1;
+
+                for (int i = 2; i + 1 < m_buf.size(); ++i) {
+                    if (quint8(m_buf[i]) == SOF0 && quint8(m_buf[i + 1]) == SOF1) {
+                        nextSof = i;
+                        break;
+                    }
+                }
+
+                if (nextSof > 0) {
+                    qWarning() << "[BED_SNAPSHOT RESYNC]"
+                               << "dropBytes =" << nextSof
+                               << "nextType =" << QString("0x%1")
+                                                      .arg(quint8(m_buf[nextSof + 2]), 2, 16, QLatin1Char('0'))
+                                                      .toUpper();
+
+                    m_buf.remove(0, nextSof);
+                } else {
+                    m_buf.remove(0, 1);
+                }
+
                 emit parseError("Invalid BED_SNAPSHOT packet, resyncing...");
                 continue;
             }
@@ -347,7 +442,33 @@ void SerialReceiver::processBuffer()
 
             BedStatusPacket pkt;
             if (!tryParseBedStatus(pkt)) {
-                m_buf.remove(0, 1);
+                // ======================================================
+                // TEMP DEBUG PHASE 5:
+                // Fast resync after an invalid large BED_STATUS packet.
+                // This prevents the parser from staying locked inside a
+                // corrupted 522-byte window.
+                // ======================================================
+                int nextSof = -1;
+
+                for (int i = 2; i + 1 < m_buf.size(); ++i) {
+                    if (quint8(m_buf[i]) == SOF0 && quint8(m_buf[i + 1]) == SOF1) {
+                        nextSof = i;
+                        break;
+                    }
+                }
+
+                if (nextSof > 0) {
+                    qWarning() << "[BED_STATUS RESYNC]"
+                               << "dropBytes =" << nextSof
+                               << "nextType =" << QString("0x%1")
+                                                      .arg(quint8(m_buf[nextSof + 2]), 2, 16, QLatin1Char('0'))
+                                                      .toUpper();
+
+                    m_buf.remove(0, nextSof);
+                } else {
+                    m_buf.remove(0, 1);
+                }
+
                 emit parseError("Invalid BED_STATUS packet, resyncing...");
                 continue;
             }
@@ -542,7 +663,21 @@ bool SerialReceiver::tryParseBedSnapshot(BedSnapshotPacket &out)
     out.crc0 = (quint8)m_buf[520];
     out.crc1 = (quint8)m_buf[521];
 
-    // CRC فعلاً placeholder است، validate واقعی نداریم
+    // ======================================================
+    // TEMP DEBUG PHASE 4:
+    // Validate fixed packet footer.
+    // Without this check, a false AA 55 20 sequence inside the
+    // UART stream can be accepted as a valid BED_SNAPSHOT.
+    // ======================================================
+    if (out.crc0 != 0x12 || out.crc1 != 0x34) {
+        qWarning() << "[BED_SNAPSHOT INVALID FOOTER]"
+                   << "seq =" << out.seq
+                   << "frame =" << out.frameId
+                   << "crc0 =" << QString("0x%1").arg(out.crc0, 2, 16, QLatin1Char('0')).toUpper()
+                   << "crc1 =" << QString("0x%1").arg(out.crc1, 2, 16, QLatin1Char('0')).toUpper();
+        return false;
+    }
+
     return true;
 }
 /*========================================================================================*/
@@ -578,7 +713,21 @@ bool SerialReceiver::tryParseBedStatus(BedStatusPacket &out)
     out.crc0 = (quint8)m_buf[520];
     out.crc1 = (quint8)m_buf[521];
 
-    // CRC فعلاً placeholder است، validate واقعی نداریم
+    // ======================================================
+    // TEMP DEBUG PHASE 4:
+    // Validate fixed packet footer.
+    // Without this check, a false AA 55 22 sequence inside the
+    // UART stream can be accepted as a valid BED_STATUS.
+    // ======================================================
+    if (out.crc0 != 0x12 || out.crc1 != 0x34) {
+        qWarning() << "[BED_STATUS INVALID FOOTER]"
+                   << "seq =" << out.seq
+                   << "frame =" << out.frameId
+                   << "crc0 =" << QString("0x%1").arg(out.crc0, 2, 16, QLatin1Char('0')).toUpper()
+                   << "crc1 =" << QString("0x%1").arg(out.crc1, 2, 16, QLatin1Char('0')).toUpper();
+        return false;
+    }
+
     return true;
 }
 

@@ -114,11 +114,11 @@ QColor HeatmapWidget::colorForValue(int v) const
     // NEW:
     // اگر pressureLike خیلی بالا باشد، یعنی no-contact / background
     // و باید به‌صورت dark navy نمایش داده شود.
-    const int noContactPressureThreshold = 55;
+  /*  const int noContactPressureThreshold = 55;
 
     if (v > noContactPressureThreshold) {
         return QColor(8, 18, 40);   // dark navy
-    }
+    }*/
 
     // NEW: تشخیص background واقعی (no contact)
 
@@ -213,14 +213,15 @@ void HeatmapWidget::paintEvent(QPaintEvent *event)
 
             if (m_bedStore && m_bedStore->hasFrame()) {
                 value = m_bedStore->value(r, c);
-                status = m_bedStore->status(r, c);
 
-                // طبق protocol:
-                // 0 = OK
-                // 1 = WARNING
-                // 2 = ERROR
-                // 3 = DISCONNECTED
-                valid = (status == 0 || status == 1);
+                // ======================================================
+                // TEMP DEBUG PHASE 1:
+                // برای تست خام BED_SNAPSHOT، فعلاً BED_STATUS را نادیده می‌گیریم.
+                // هدف این است مطمئن شویم packet 0x20 درست parse و render می‌شود.
+                // بعد از تست، status دوباره به مسیر render برمی‌گردد.
+                // ======================================================
+                status = 0;
+                valid = true;
             }
 
             const SensorStatus sst =
@@ -239,9 +240,33 @@ void HeatmapWidget::paintEvent(QPaintEvent *event)
             const quint8 rawValue = value;
             Q_UNUSED(rawValue);
 
-            // برگشت به رفتار قبلی نمایش heatmap:
-            // مقدار snapshot را به pressure-like تبدیل می‌کنیم
-            value = quint8(63 - value);
+            // Convert TOF distance-like value to pressure-like value.
+            // Lower TOF value means higher pressure.
+            // Sensor range is approximately 0..50.
+            const int rawTof = int(value);
+
+            constexpr int kMaxTof = 50;
+
+            const int pressureLike =
+                qBound(0, kMaxTof - rawTof, kMaxTof);
+
+            value = quint8(pressureLike);
+
+            // ======================================================
+            // TEMP DEBUG:
+            // Print sacrum-zone TOF values to calibrate pressure
+            // mapping and heatmap color thresholds.
+            // ======================================================
+            if (r >= 16 && r <= 20 &&
+                c >= 7  && c <= 9)
+            {
+                qDebug() << "[HEATMAP CALIB]"
+                         << "r =" << r
+                         << "c =" << c
+                         << "rawTof =" << rawTof
+                         << "pressureLike =" << pressureLike;
+            }
+
 
             QRect cell(bed.x() + c * cellW,
                        bed.y() + r * cellH,
