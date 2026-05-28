@@ -1004,6 +1004,85 @@ void SerialReceiver::sendDebugCommand(quint8 commandId, quint16 param)
         qWarning() << "[UI->MAIN] DEBUG_COMMAND not sent: serial port is closed";
     }
 }
+
+
+// ======================================================
+// Send runtime therapy/risk preset selection command
+// to the Main Board.
+//
+// Packet format:
+// AA 55 60 SEQ preset 00 12 34
+// ======================================================
+void SerialReceiver::sendTherapyPreset(quint8 preset)
+{
+    QByteArray packet;
+
+    packet.append(char(0xAA));
+    packet.append(char(0x55));
+    packet.append(char(TYPE_THERAPY_PRESET));
+    packet.append(char(m_uiTxSeq++));
+    packet.append(char(preset));
+    packet.append(char(0x00));
+    packet.append(char(0x12));
+    packet.append(char(0x34));
+
+    if (m_port && m_port->isOpen()) {
+
+        // ======================================================
+        // Send packet to Main Board UART command channel
+        // ======================================================
+        m_port->write(packet);
+
+        qDebug() << "[UI->MAIN] THERAPY_PRESET sent"
+                 << "preset =" << preset
+                 << "raw =" << packet.toHex(' ');
+
+    } else {
+
+        qWarning() << "[UI->MAIN] THERAPY_PRESET not sent:"
+                   << "serial port is closed";
+    }
+}
+
+// ======================================================
+// Send runtime synthetic test pattern selection command
+// to the Main Board.
+//
+// Packet format:
+// AA 55 61 SEQ pattern_id 00 12 34
+// ======================================================
+void SerialReceiver::sendTestPattern(quint8 patternId)
+{
+    QByteArray packet;
+
+    packet.append(char(0xAA));
+    packet.append(char(0x55));
+    packet.append(char(TYPE_TEST_PATTERN));
+    packet.append(char(m_uiTxSeq++));
+    packet.append(char(patternId));
+    packet.append(char(0x00));
+    packet.append(char(0x12));
+    packet.append(char(0x34));
+
+    if (m_port && m_port->isOpen()) {
+
+        // ======================================================
+        // Send packet to Main Board UART command channel
+        // ======================================================
+        m_port->write(packet);
+
+        qDebug() << "[UI->MAIN] TEST_PATTERN sent"
+                 << "pattern =" << patternId
+                 << "raw =" << packet.toHex(' ');
+
+    } else {
+
+        qWarning() << "[UI->MAIN] TEST_PATTERN not sent:"
+                   << "serial port is closed";
+    }
+}
+
+
 /*========================================================================================*/
 // ======================================================
 // Main -> UI

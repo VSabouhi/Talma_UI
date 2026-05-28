@@ -737,6 +737,90 @@ MainWindow::MainWindow(QWidget *parent)
 
         mainBoardDbgLayout->addLayout(mainBoardDbgButtonGrid);
 
+
+        // ======================================================
+        // Runtime command controls
+        //
+        // These controls send runtime configuration commands to
+        // the Main Board command channel.
+        //
+        // TYPE 0x60:
+        // - Therapy/risk preset selection
+        //
+        // TYPE 0x61:
+        // - Synthetic bed test pattern selection
+        //
+        // NOTE:
+        // Controls are placed inside the Main Board Debug Console
+        // so they stay grouped with other UI -> Main commands.
+        // ======================================================
+        QGroupBox *grpRuntimeCommands =
+            new QGroupBox("Runtime Commands", m_grpMainBoardDebug);
+
+        grpRuntimeCommands->setStyleSheet(debugGroupStyle);
+
+        QVBoxLayout *runtimeCommandLayout =
+            new QVBoxLayout(grpRuntimeCommands);
+
+        runtimeCommandLayout->setContentsMargins(14, 10, 14, 12);
+        runtimeCommandLayout->setSpacing(8);
+
+        // ======================================================
+        // Therapy/risk preset selector.
+        //
+        // 0 = DEMO
+        // 1 = CLINICAL_TEST
+        // ======================================================
+        m_comboTherapyPreset = new QComboBox(grpRuntimeCommands);
+
+        m_comboTherapyPreset->addItem("DEMO", 0);
+        m_comboTherapyPreset->addItem("CLINICAL_TEST", 1);
+
+        m_comboTherapyPreset->setToolTip(
+            "Select Main Board therapy/risk behavior preset"
+            );
+
+        // ======================================================
+        // Synthetic bed pattern selector.
+        //
+        // Pattern IDs are defined by Main Board firmware.
+        // ======================================================
+        m_comboTestPattern = new QComboBox(grpRuntimeCommands);
+
+        m_comboTestPattern->addItem("REAL_DATA",                  0);
+        m_comboTestPattern->addItem("GRADIENT_DEBUG",             1);
+        m_comboTestPattern->addItem("CHECKERBOARD_DEBUG",         2);
+        m_comboTestPattern->addItem("BODY_REALISTIC_SUPINE",      3);
+        m_comboTestPattern->addItem("BODY_ADULT_NORMAL",          4);
+        m_comboTestPattern->addItem("BODY_SHORT_LIGHT",           5);
+        m_comboTestPattern->addItem("BODY_SHIFT_LEFT",            6);
+        m_comboTestPattern->addItem("BODY_SHIFT_RIGHT",           7);
+        m_comboTestPattern->addItem("BODY_SACRUM_DOMINANT",       8);
+        m_comboTestPattern->addItem("BODY_ONE_HEEL_DOMINANT",     9);
+        m_comboTestPattern->addItem("BODY_PARTIAL_FAULT",         10);
+        m_comboTestPattern->addItem("BODY_RESTLESS",              11);
+        m_comboTestPattern->addItem("BODY_SIDE_LEFT",             12);
+        m_comboTestPattern->addItem("BODY_SIDE_RIGHT",            13);
+        m_comboTestPattern->addItem("BODY_TURNING_CYCLE",         14);
+        m_comboTestPattern->addItem("BODY_TURNING_CYCLE_SMOOTH",  15);
+
+        m_comboTestPattern->setToolTip(
+            "Select Main Board synthetic heatmap pattern"
+            );
+
+        // ======================================================
+        // Add runtime command controls to debug layout.
+        // ======================================================
+        runtimeCommandLayout->addWidget(new QLabel("Therapy Preset:", grpRuntimeCommands));
+        runtimeCommandLayout->addWidget(m_comboTherapyPreset);
+
+        runtimeCommandLayout->addSpacing(8);
+
+        runtimeCommandLayout->addWidget(new QLabel("Test Pattern:", grpRuntimeCommands));
+        runtimeCommandLayout->addWidget(m_comboTestPattern);
+
+        mainBoardDbgLayout->addWidget(grpRuntimeCommands);
+
         // Status labels
         m_lblDbgMainBoardStatus = new QLabel("Status: Debug disabled", m_grpMainBoardDebug);
         m_lblDbgLastTx = new QLabel("Last TX: --", m_grpMainBoardDebug);
@@ -780,6 +864,100 @@ MainWindow::MainWindow(QWidget *parent)
                         enabled
                             ? "Status: Debug commands ENABLED"
                             : "Status: Debug commands DISABLED");
+                });
+
+
+        // ======================================================
+        // Runtime command:
+        // Send therapy/risk preset selection to Main Board.
+        //
+        // TYPE = 0x60
+        //
+        // Safety:
+        // - Command is only sent when Main Board debug commands
+        //   are enabled.
+        // - This prevents accidental runtime mode changes.
+        // ======================================================
+        connect(m_comboTherapyPreset,
+                QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this,
+                [this](int index)
+                {
+                    if (!m_chkEnableMainBoardDebug ||
+                        !m_chkEnableMainBoardDebug->isChecked()) {
+
+                        qWarning() << "[RUNTIME CMD] Therapy preset ignored:"
+                                   << "debug commands disabled";
+                        return;
+                    }
+
+                    if (!m_port.isOpen()) {
+                        qWarning() << "[RUNTIME CMD] Therapy preset ignored:"
+                                   << "serial port is closed";
+
+                        if (m_lblDbgMainBoardStatus)
+                            m_lblDbgMainBoardStatus->setText("Status: Serial CLOSED");
+
+                        return;
+                    }
+
+                    const quint8 preset =
+                        quint8(m_comboTherapyPreset->itemData(index).toUInt());
+
+                    m_rx.sendTherapyPreset(preset);
+
+                    if (m_lblDbgLastTx) {
+                        m_lblDbgLastTx->setText(
+                            QString("Last TX: THERAPY_PRESET preset=%1")
+                                .arg(preset));
+                    }
+                });
+
+
+        // ======================================================
+        // Runtime command:
+        // Send synthetic test pattern selection to Main Board.
+        //
+        // TYPE = 0x61
+        //
+        // Safety:
+        // - Command is only sent when Main Board debug commands
+        //   are enabled.
+        // - This prevents accidental runtime pattern changes.
+        // ======================================================
+        connect(m_comboTestPattern,
+                QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this,
+                [this](int index)
+                {
+                    if (!m_chkEnableMainBoardDebug ||
+                        !m_chkEnableMainBoardDebug->isChecked()) {
+
+                        qWarning() << "[RUNTIME CMD] Test pattern ignored:"
+                                   << "debug commands disabled";
+                        return;
+                    }
+
+                    if (!m_port.isOpen()) {
+                        qWarning() << "[RUNTIME CMD] Test pattern ignored:"
+                                   << "serial port is closed";
+
+                        if (m_lblDbgMainBoardStatus)
+                            m_lblDbgMainBoardStatus->setText("Status: Serial CLOSED");
+
+                        return;
+                    }
+
+                    const quint8 patternId =
+                        quint8(m_comboTestPattern->itemData(index).toUInt());
+
+                    m_rx.sendTestPattern(patternId);
+
+                    if (m_lblDbgLastTx) {
+                        m_lblDbgLastTx->setText(
+                            QString("Last TX: TEST_PATTERN pattern=%1")
+                                .arg(patternId));
+                    }
                 });
 
 
@@ -872,6 +1050,12 @@ MainWindow::MainWindow(QWidget *parent)
                 m_lblDbgMainBoardStatus->setText("Status: Test plan requested");
                 m_lblDbgLastTx->setText("Last TX: DEBUG_COMMAND cmd=1 param=1");
             });
+
+
+
+
+
+
     /* =========================================================
      *  2.6) Analytics Page (runtime-built, separate tab)
      * ========================================================= */
@@ -2824,6 +3008,7 @@ void MainWindow::renderSummaryToDashboard(const SummaryData &summary)
     case 0: riskLevelText = "LOW"; break;
     case 1: riskLevelText = "MODERATE"; break;
     case 2: riskLevelText = "HIGH"; break;
+    case 3: riskLevelText = "CRITICAL"; break;
     default: riskLevelText = "UNKNOWN"; break;
     }
 
@@ -3448,13 +3633,10 @@ void MainWindow::renderSummaryToDashboard(const SummaryData &summary)
     switch (summary.recommendationCode)
     {
     case 1:
-        recText = "Reposition patient";
+        recText = "Reposition / pressure relief needed";
         break;
     case 2:
-        recText = "Check sacrum support";
-        break;
-    case 3:
-        recText = "Increase movement frequency";
+        recText = "Urgent reposition / critical pressure exposure";
         break;
     default:
         break;
@@ -3501,19 +3683,7 @@ void MainWindow::renderSummaryToDashboard(const SummaryData &summary)
     }
 
     m_lblRecommendation->setStyleSheet(recStyle);
-
-    m_lblRecommendation->setStyleSheet(
-        "QLabel {"
-        "  color: #E5E7EB;"
-        "  background-color: #0F1720;"
-        "  border: 1px solid #334155;"
-        "  border-radius: 10px;"
-        "  padding: 10px 12px;"
-        "  font-size: 13px;"
-        "  font-weight: 600;"
-        "}"
-        );
-
+    m_lblRecommendation->setText(recText);
 }
 /*========================================================================================*/
 

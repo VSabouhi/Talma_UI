@@ -173,6 +173,25 @@ public:
     // ======================================================
     void sendDebugCommand(quint8 commandId, quint16 param);
 
+    // ======================================================
+    // UI -> Main Board
+    // Select therapy/risk preset.
+    // TYPE = 0x60
+    //
+    // Packet:
+    // AA 55 60 SEQ preset 00 12 34
+    // ======================================================
+    void sendTherapyPreset(quint8 preset);
+
+    // ======================================================
+    // UI -> Main Board
+    // Select synthetic bed test pattern.
+    // TYPE = 0x61
+    //
+    // Packet:
+    // AA 55 61 SEQ pattern_id 00 12 34
+    // ======================================================
+    void sendTestPattern(quint8 patternId);
 signals:
     void packetReceived(const NodePacket &pkt);
     void parseError(const QString &msg);
@@ -287,6 +306,12 @@ private:
     // UI -> Main Board
     // Debug/simulation command packet
     static constexpr quint8 TYPE_DEBUG_COMMAND = 0x5A;
+
+    // ======================================================
+    // Runtime command packet types
+    // ======================================================
+    static constexpr quint8 TYPE_THERAPY_PRESET = 0x60;
+    static constexpr quint8 TYPE_TEST_PATTERN   = 0x61;
 
     // ======================================================
     // UART Packet Statistics

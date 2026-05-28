@@ -361,6 +361,9 @@ private:
     QChartView *m_chartExposureView = nullptr;
     QBarSeries *m_seriesExposure = nullptr;
 
+    // Runtime command controls
+    QComboBox *m_comboTherapyPreset = nullptr;
+    QComboBox *m_comboTestPattern = nullptr;
 
 private slots:
     void onConnectClicked();
